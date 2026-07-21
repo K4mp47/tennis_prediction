@@ -2,8 +2,78 @@
   "manifest_version": 1,
   "project": "tennis-prediction",
   "description": "Raw data manifest for yearly Tennis-Data Excel files.",
-  "generated_at_utc": "2026-07-15T09:11:46.603858+00:00",
+  "generated_at_utc": "2026-07-21T10:07:17.016958+00:00",
   "sources": [
+    {
+      "dataset": "tennis_matches",
+      "source_name": "Tennis-Data",
+      "year": 2015,
+      "source_url": "http://tennis-data.co.uk/2015/2015.xlsx",
+      "local_path": "data/raw/2015.xlsx",
+      "file_format": "xlsx",
+      "exists_locally": true,
+      "file_size_bytes": 526784,
+      "sha256": "74d1ffa15ad8b13aea0ffd6eba17fa5dc05b2b57263515d20e7ee39be0354485",
+      "created_at_utc": "2026-07-21T10:07:17.019919+00:00",
+      "raw_data_policy": "immutable",
+      "notes": "Yearly tennis match data used as raw input for winner prediction."
+    },
+    {
+      "dataset": "tennis_matches",
+      "source_name": "Tennis-Data",
+      "year": 2016,
+      "source_url": "http://tennis-data.co.uk/2016/2016.xlsx",
+      "local_path": "data/raw/2016.xlsx",
+      "file_format": "xlsx",
+      "exists_locally": true,
+      "file_size_bytes": 546990,
+      "sha256": "e55547add1d8c8cad17d1eb7be5a24de7757f33dd90fe4f91ca7d4ee8a3e4b08",
+      "created_at_utc": "2026-07-21T10:07:17.023421+00:00",
+      "raw_data_policy": "immutable",
+      "notes": "Yearly tennis match data used as raw input for winner prediction."
+    },
+    {
+      "dataset": "tennis_matches",
+      "source_name": "Tennis-Data",
+      "year": 2017,
+      "source_url": "http://tennis-data.co.uk/2017/2017.xlsx",
+      "local_path": "data/raw/2017.xlsx",
+      "file_format": "xlsx",
+      "exists_locally": true,
+      "file_size_bytes": 526053,
+      "sha256": "d8d2e2af5bda1f7891de39b18739ba229719e00672c22d2892b3e347dc6e1537",
+      "created_at_utc": "2026-07-21T10:07:17.024785+00:00",
+      "raw_data_policy": "immutable",
+      "notes": "Yearly tennis match data used as raw input for winner prediction."
+    },
+    {
+      "dataset": "tennis_matches",
+      "source_name": "Tennis-Data",
+      "year": 2018,
+      "source_url": "http://tennis-data.co.uk/2018/2018.xlsx",
+      "local_path": "data/raw/2018.xlsx",
+      "file_format": "xlsx",
+      "exists_locally": true,
+      "file_size_bytes": 474033,
+      "sha256": "3e52c70872c87736110bfe22f682bd224bb5883bf5367a7f8997aab991c7162a",
+      "created_at_utc": "2026-07-21T10:07:17.028646+00:00",
+      "raw_data_policy": "immutable",
+      "notes": "Yearly tennis match data used as raw input for winner prediction."
+    },
+    {
+      "dataset": "tennis_matches",
+      "source_name": "Tennis-Data",
+      "year": 2019,
+      "source_url": "http://tennis-data.co.uk/2019/2019.xlsx",
+      "local_path": "data/raw/2019.xlsx",
+      "file_format": "xlsx",
+      "exists_locally": true,
+      "file_size_bytes": 411531,
+      "sha256": "a267a7a779406ccd89762b98cbe4bb6370839a658f2a95ac098310ea3394e827",
+      "created_at_utc": "2026-07-21T10:07:17.031268+00:00",
+      "raw_data_policy": "immutable",
+      "notes": "Yearly tennis match data used as raw input for winner prediction."
+    },
     {
       "dataset": "tennis_matches",
       "source_name": "Tennis-Data",
@@ -14,7 +84,7 @@
       "exists_locally": true,
       "file_size_bytes": 206869,
       "sha256": "310467bb81360e1981e9f3775946c63a5dc707a1d941e5ad4d9713da97daa752",
-      "created_at_utc": "2026-07-15T09:11:46.610241+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.032071+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -28,7 +98,7 @@
       "exists_locally": true,
       "file_size_bytes": 395807,
       "sha256": "dcbd273a4fa101f4783384dbfe3410bfc7ee7bed0aed4ab9a09afbffb294c4ca",
-      "created_at_utc": "2026-07-15T09:11:46.614966+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.033870+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -42,7 +112,7 @@
       "exists_locally": true,
       "file_size_bytes": 417917,
       "sha256": "9feaa1567783cb063e23b6f2d653d4c97210a48b001373eb367eb2d8b6a60a86",
-      "created_at_utc": "2026-07-15T09:11:46.619366+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.035993+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -56,7 +126,7 @@
       "exists_locally": true,
       "file_size_bytes": 447088,
       "sha256": "5789a33720cbd5da9c7909713cfca131927eedaf305ab2b111ec6f8dda842b29",
-      "created_at_utc": "2026-07-15T09:11:46.624297+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.037629+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -70,7 +140,7 @@
       "exists_locally": true,
       "file_size_bytes": 445729,
       "sha256": "d92a4d4167cfece60b624e81ba8d6724d90a4704637341bb0bc87539a36c746a",
-      "created_at_utc": "2026-07-15T09:11:46.629388+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.040122+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -84,7 +154,7 @@
       "exists_locally": true,
       "file_size_bytes": 426707,
       "sha256": "941aaa1abc49131f51e1f7f6eee93dac829dd72578ca10b341dfc4c9d41ba013",
-      "created_at_utc": "2026-07-15T09:11:46.634222+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.042861+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     },
@@ -98,7 +168,7 @@
       "exists_locally": true,
       "file_size_bytes": 257172,
       "sha256": "14b4451ed20801b79d9b5a30ea05be7fe7eab0c8669cbf3a1de7202d5bd7c00f",
-      "created_at_utc": "2026-07-15T09:11:46.637415+00:00",
+      "created_at_utc": "2026-07-21T10:07:17.045616+00:00",
       "raw_data_policy": "immutable",
       "notes": "Yearly tennis match data used as raw input for winner prediction."
     }
