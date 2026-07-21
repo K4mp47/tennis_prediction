@@ -16,7 +16,7 @@ import pandas as pd
 
 
 RAW_DIR = Path("../data/raw")
-OUTPUT_FILE = Path("../data/interim/tennis_matches_2020_2026.data")
+OUTPUT_FILE = Path("../data/interim/tennis_matches_2015_2026.data")
 
 CANONICAL_COLUMNS = [
     "ATP", "Location", "Tournament", "Date", "Series", "Court", "Surface",
