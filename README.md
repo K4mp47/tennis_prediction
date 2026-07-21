@@ -27,7 +27,7 @@ Raw Tennis-Data Excel files are downloaded into `data/raw/`. The data files are 
 Download a range of yearly files with:
 
 ```bash
-uv run python scripts/download_data.py --start-year 2025 --end-year 2026
+uv run python scripts/download_data.py --start-year 2015 --end-year 2026
 ```
 
 The download script also regenerates `data/raw/manifest.json`. The manifest records the source URL, local path, file size, SHA-256 checksum, and immutable raw-data policy for each downloaded file.
@@ -35,7 +35,7 @@ The download script also regenerates `data/raw/manifest.json`. The manifest reco
 If you already have the Excel files locally and only want to rebuild the manifest, run:
 
 ```bash
-uv run python scripts/create_manifest.py --start-year 2025 --end-year 2026
+uv run python scripts/create_manifest.py --start-year 2015 --end-year 2026
 ```
 
 run the `merge_tennis_excel.py` script to merge the yearly Excel files into a single CSV file:
