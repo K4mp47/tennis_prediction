@@ -14,3 +14,6 @@ wheels/
 !/data/
 !/data/raw/
 !/data/raw/manifest.json
+
+# Ruff cache
+.ruff_cache

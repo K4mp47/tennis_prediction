@@ -38,6 +38,16 @@ If you already have the Excel files locally and only want to rebuild the manifes
 uv run python scripts/create_manifest.py --start-year 2025 --end-year 2026
 ```
 
+run the `merge_tennis_excel.py` script to merge the yearly Excel files into a single CSV file:
+
+```bash
+uv run python scripts/merge_tennis_excel.py
+```
+
+## Data preparation
+
+Data preparation is performed in the `classification.ipynb` notebook. This notebook reads the merged CSV file, cleans the data, and prepares it for machine learning models. The notebook is available in the `docs` directory and can be run in a Jupyter environment.
+
 ## Run locally
 
 Run the package entry point, **still to implement**:
