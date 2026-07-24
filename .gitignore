@@ -11,9 +11,6 @@ wheels/
 
 # Local data files
 /data/**
-!/data/
-!/data/raw/
-!/data/raw/manifest.json
 
 # Ruff cache
 .ruff_cache
