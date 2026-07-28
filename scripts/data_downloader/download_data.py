@@ -5,7 +5,7 @@ from pathlib import Path
 from create_manifest import create_manifest
 
 URL_TEMPLATE = "http://tennis-data.co.uk/{year}/{year}.xlsx"
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw"
 
 def download_file(url: str, dest: Path) -> None:

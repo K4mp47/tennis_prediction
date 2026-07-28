@@ -10,7 +10,7 @@ from typing import Any
 
 SOURCE_NAME = "Tennis-Data"
 URL_TEMPLATE = "http://tennis-data.co.uk/{year}/{year}.xlsx"
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO_ROOT / "data" / "raw"
 MANIFEST_PATH = RAW_DIR / "manifest.json"
 
