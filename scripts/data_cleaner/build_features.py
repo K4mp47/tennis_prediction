@@ -287,11 +287,52 @@ def add_model_features(df: pd.DataFrame, rare_threshold: int) -> pd.DataFrame:
     out["tournament_bucket"] = map_rare_categories(out["tournament"].fillna("Unknown"), rare_threshold)
     out["location_bucket"] = map_rare_categories(out["location"].fillna("Unknown"), rare_threshold)
 
-    out["player_a_win"] = 1
-
     out = out.sort_values("date", kind="mergesort").reset_index(drop=True)
     return out
 
+def make_symmetric_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    a_win = df.copy()
+    a_win["player_a_win"] = 1
+
+    a_lose = df.copy()
+    a_lose["player_a_win"] = 0
+
+    swap_cols = [
+        ("winner_rank", "loser_rank"),
+        ("winner_points", "loser_points"),
+        ("winner_rank_missing", "loser_rank_missing"),
+        ("winner_points_missing", "loser_points_missing"),
+        ("winner_matches_before", "loser_matches_before"),
+        ("winner_win_rate_before", "loser_win_rate_before"),
+        ("winner_recent5_win_rate_before", "loser_recent5_win_rate_before"),
+        ("winner_surface_win_rate_before", "loser_surface_win_rate_before"),
+        ("winner_days_since_last_match", "loser_days_since_last_match"),
+        ("winner_h2h_wins_before", "loser_h2h_wins_before"),
+        ("winner_h2h_win_rate_before", "loser_h2h_win_rate_before"),
+        ("winner_implied_prob_avg", "loser_implied_prob_avg"),
+    ]
+
+    for left, right in swap_cols:
+        if left in a_lose.columns and right in a_lose.columns:
+            a_lose[left], a_lose[right] = a_lose[right].copy(), a_lose[left].copy()
+
+    sign_flip_cols = [
+        "rank_diff",
+        "points_diff",
+        "implied_prob_diff_avg",
+        "experience_diff",
+        "win_rate_diff",
+        "recent5_win_rate_diff",
+        "surface_win_rate_diff",
+        "rest_days_diff",
+    ]
+    for c in sign_flip_cols:
+        if c in a_lose.columns:
+            a_lose[c] = -a_lose[c]
+
+    out = pd.concat([a_win, a_lose], ignore_index=True)
+    out = out.sort_values("date", kind="mergesort").reset_index(drop=True)
+    return out
 
 def build_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str], list[str]]:
     categorical_features = [
@@ -458,7 +499,7 @@ def main() -> None:
     with_hist = build_player_history_features(cleaned_df)
     with_h2h = build_head_to_head_features(with_hist)
     featured_df = add_model_features(with_h2h, rare_threshold=args.rare_threshold)
-
+    featured_df = make_symmetric_dataset(featured_df)
     X, y, numeric_features, categorical_features = build_feature_matrix(featured_df)
 
     metrics = run_baseline_and_rfecv(
