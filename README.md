@@ -46,7 +46,24 @@ uv run python scripts/merge_tennis_excel.py
 
 ## Data preparation
 
-Data preparation is performed in the `classification.ipynb` notebook. This notebook reads the merged CSV file, cleans the data, and prepares it for machine learning models. The notebook is available in the `docs` directory and can be run in a Jupyter environment.
+After merging raw yearly files, normalize them into a cleaned pre-modeling table:
+
+```bash
+uv run python scripts/data_cleaner/normalize_data.py
+```
+
+Then create an enriched feature-engineered dataset:
+
+```bash
+uv run python scripts/data_cleaner/engineer_features.py
+```
+
+This generates:
+
+- `data/processed/tennis_matches_enriched.data`
+- `data/processed/tennis_matches_enriched.metadata.json`
+
+The notebook `docs/classification.ipynb` can then use the enriched dataset for model experimentation.
 
 ## Run locally
 

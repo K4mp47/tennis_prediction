@@ -1007,6 +1007,7 @@ def try_parse_number(text: str) -> float | None:
 
 def default_initial_file() -> Path | None:
     candidates = [
+        Path("data/processed/tennis_matches_enriched.data"),
         Path("data/interim/tennis_matches_cleaned.data"),
         Path("data/interim/tennis_matches_normalized.data"),
         Path("data/interim/tennis_matches_raw.data"),
