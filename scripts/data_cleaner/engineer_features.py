@@ -4,13 +4,12 @@ import argparse
 import json
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT = REPO_ROOT / "data" / "interim" / "tennis_matches_cleaned.data"
@@ -290,9 +289,9 @@ def create_enriched_dataset(cleaned_df: pd.DataFrame) -> tuple[pd.DataFrame, dic
 
     enriched_df = pd.DataFrame(enriched_rows)
     metadata = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "input_rows": int(len(cleaned_df)),
-        "output_rows": int(len(enriched_df)),
+        "created_at_utc": datetime.now(UTC).isoformat(),
+        "input_rows": len(cleaned_df),
+        "output_rows": len(enriched_df),
         "output_columns": list(enriched_df.columns),
         "skipped_same_player_matches": int(skipped_same_player),
         "elo_k_factor": ELO_K_FACTOR,
