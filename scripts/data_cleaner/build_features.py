@@ -28,131 +28,363 @@ ORDINAL_ROUND_ORDER = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# ARGUMENTS
+# ---------------------------------------------------------------------------
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build pre-match engineered features and run RFECV feature selection."
+        description=(
+            "Build pre-match engineered features from the enriched "
+            "Tennis-Data/Sackmann dataset and run RFECV."
+        )
     )
+
     default_root = Path(__file__).resolve().parents[2]
 
     parser.add_argument(
         "--input",
         type=Path,
-        default=default_root / "data" / "interim" / "tennis_matches_cleaned.data",
+        default=(
+                default_root
+                / "data"
+                / "interim"
+                / "tennis_matches_enriched.data"
+        ),
+        help="Input enriched dataset.",
     )
+
     parser.add_argument(
         "--output-features",
         type=Path,
-        default=default_root / "data" / "interim" / "tennis_matches_features.data",
+        default=(
+                default_root
+                / "data"
+                / "interim"
+                / "tennis_matches_features.data"
+        ),
     )
+
     parser.add_argument(
         "--output-metadata",
         type=Path,
-        default=default_root / "data" / "interim" / "tennis_matches_features_metadata.json",
+        default=(
+                default_root
+                / "data"
+                / "interim"
+                / "tennis_matches_features_metadata.json"
+        ),
     )
+
     parser.add_argument(
         "--rare-threshold",
         type=int,
         default=20,
-        help="Minimum count for tournament/location category before mapping to 'other'.",
+        help=(
+            "Minimum number of observations required to keep a "
+            "tournament/location category."
+        ),
     )
+
     parser.add_argument(
         "--rfecv-step",
         type=int,
         default=1,
     )
+
     parser.add_argument(
         "--rfecv-min-features",
         type=int,
         default=8,
     )
+
     return parser.parse_args()
 
+
+# ---------------------------------------------------------------------------
+# LOAD
+# ---------------------------------------------------------------------------
 
 def load_clean_data(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Input file does not exist: {path}")
 
     df = pd.read_csv(path)
-    if "date" not in df.columns:
-        raise ValueError("Expected a 'date' column in cleaned dataset")
 
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    if "date" not in df.columns:
+        raise ValueError("Expected a 'date' column.")
+
+    required = [
+        "winner_name",
+        "loser_name",
+        "surface",
+        "round",
+    ]
+
+    missing = [c for c in required if c not in df.columns]
+
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {missing}"
+        )
+
+    df["date"] = pd.to_datetime(
+        df["date"],
+        errors="coerce",
+    )
+
     df = df.dropna(subset=["date"]).copy()
 
-    return df.sort_values(
-        ["date", "source_year", "atp", "tournament", "winner_name", "loser_name"],
-        kind="mergesort",
-    ).reset_index(drop=True)
+    sort_cols = [
+        c
+        for c in [
+            "date",
+            "source_year",
+            "atp",
+            "tournament",
+            "winner_name",
+            "loser_name",
+        ]
+        if c in df.columns
+    ]
+
+    df = (
+        df.sort_values(
+            sort_cols,
+            kind="mergesort",
+        )
+        .reset_index(drop=True)
+    )
+
+    return df
 
 
-def map_rare_categories(series: pd.Series, min_count: int) -> pd.Series:
-    counts = series.value_counts(dropna=False)
-    keep_values = set(counts[counts >= min_count].index)
-    return series.where(series.isin(keep_values), "other").fillna("other")
+# ---------------------------------------------------------------------------
+# UTILS
+# ---------------------------------------------------------------------------
+
+def map_rare_categories(
+        series: pd.Series,
+        min_count: int,
+) -> pd.Series:
+    series = series.astype("object")
+
+    counts = series.value_counts(
+        dropna=False,
+    )
+
+    keep_values = set(
+        counts[counts >= min_count].index
+    )
+
+    return (
+        series.where(
+            series.isin(keep_values),
+            "other",
+        )
+        .fillna("other")
+    )
 
 
-def build_player_history_features(df: pd.DataFrame) -> pd.DataFrame:
-    matches = df[["date", "winner_name", "loser_name", "surface", "court"]].copy()
-    matches["match_id"] = np.arange(len(matches), dtype=np.int64)
+def encode_round_ordinal(
+        series: pd.Series,
+) -> pd.Series:
+    encoder = OrdinalEncoder(
+        categories=[ORDINAL_ROUND_ORDER],
+        handle_unknown="use_encoded_value",
+        unknown_value=-1,
+    )
+
+    values = (
+        series
+        .fillna("Unknown")
+        .astype(str)
+        .to_numpy()
+        .reshape(-1, 1)
+    )
+
+    encoded = encoder.fit_transform(values).reshape(-1)
+
+    return pd.Series(
+        encoded,
+        index=series.index,
+        dtype=float,
+    )
+
+
+# ---------------------------------------------------------------------------
+# PLAYER HISTORY
+# ---------------------------------------------------------------------------
+
+def build_player_history_features(
+        df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Computes historical player features strictly BEFORE each match.
+
+    Important:
+    We never use the current match outcome when calculating a feature
+    for that same match.
+    """
+
+    out = df.copy()
+
+    out["match_id_internal"] = np.arange(
+        len(out),
+        dtype=np.int64,
+    )
+
+    matches = out[
+        [
+            "match_id_internal",
+            "date",
+            "winner_name",
+            "loser_name",
+            "surface",
+        ]
+    ].copy()
 
     winner_view = pd.DataFrame(
         {
-            "match_id": matches["match_id"],
+            "match_id_internal": matches["match_id_internal"],
             "date": matches["date"],
             "player_name": matches["winner_name"],
             "surface": matches["surface"],
-            "is_win": 1,
+            "is_win": 1.0,
         }
     )
 
     loser_view = pd.DataFrame(
         {
-            "match_id": matches["match_id"],
+            "match_id_internal": matches["match_id_internal"],
             "date": matches["date"],
             "player_name": matches["loser_name"],
             "surface": matches["surface"],
-            "is_win": 0,
+            "is_win": 0.0,
         }
     )
 
-    long_df = pd.concat([winner_view, loser_view], axis=0, ignore_index=True)
-    long_df = long_df.sort_values(["player_name", "date", "match_id"], kind="mergesort")
+    long_df = pd.concat(
+        [winner_view, loser_view],
+        ignore_index=True,
+    )
 
-    grouped = long_df.groupby("player_name", sort=False)
+    long_df = long_df.sort_values(
+        [
+            "player_name",
+            "date",
+            "match_id_internal",
+        ],
+        kind="mergesort",
+    ).reset_index(drop=True)
 
-    long_df["matches_before"] = grouped.cumcount().astype(float)
-    long_df["wins_before"] = grouped["is_win"].cumsum().shift(1).fillna(0.0)
+    # ------------------------------------------------------------------
+    # GLOBAL HISTORY
+    # ------------------------------------------------------------------
+
+    player_group = long_df.groupby(
+        "player_name",
+        sort=False,
+    )
+
+    long_df["matches_before"] = (
+        player_group.cumcount().astype(float)
+    )
+
+    # CRITICAL:
+    # cumulative wins MINUS current match result.
+    # This avoids the previous global .shift(1) bug.
+    long_df["wins_before"] = (
+            player_group["is_win"]
+            .cumsum()
+            - long_df["is_win"]
+    )
+
     long_df["win_rate_before"] = np.where(
         long_df["matches_before"] > 0,
-        long_df["wins_before"] / long_df["matches_before"],
+        long_df["wins_before"]
+        / long_df["matches_before"],
         np.nan,
+        )
+
+    # ------------------------------------------------------------------
+    # RECENT 5 MATCHES
+    # ------------------------------------------------------------------
+
+    long_df["recent5_matches_before"] = (
+        long_df.groupby(
+            "player_name",
+            sort=False,
+        )
+        .cumcount()
+        .clip(upper=5)
+        .astype(float)
     )
 
-    long_df["recent5_matches_before"] = grouped.cumcount().clip(upper=5).astype(float)
     long_df["recent5_wins_before"] = (
-        grouped["is_win"]
-        .rolling(window=5, min_periods=1)
-        .sum()
-        .shift(1)
-        .reset_index(level=0, drop=True)
+        long_df.groupby(
+            "player_name",
+            sort=False,
+        )["is_win"]
+        .transform(
+            lambda s: (
+                s.shift(1)
+                .rolling(
+                    window=5,
+                    min_periods=1,
+                )
+                .sum()
+            )
+        )
         .fillna(0.0)
     )
+
     long_df["recent5_win_rate_before"] = np.where(
         long_df["recent5_matches_before"] > 0,
-        long_df["recent5_wins_before"] / long_df["recent5_matches_before"],
+        long_df["recent5_wins_before"]
+        / long_df["recent5_matches_before"],
         np.nan,
+        )
+
+    # ------------------------------------------------------------------
+    # SURFACE HISTORY
+    # ------------------------------------------------------------------
+
+    surface_group = long_df.groupby(
+        ["player_name", "surface"],
+        sort=False,
     )
 
-    surface_group = long_df.groupby(["player_name", "surface"], sort=False)
-    long_df["surface_matches_before"] = surface_group.cumcount().astype(float)
-    long_df["surface_wins_before"] = surface_group["is_win"].cumsum().shift(1).fillna(0.0)
+    long_df["surface_matches_before"] = (
+        surface_group.cumcount().astype(float)
+    )
+
+    long_df["surface_wins_before"] = (
+            surface_group["is_win"]
+            .cumsum()
+            - long_df["is_win"]
+    )
+
     long_df["surface_win_rate_before"] = np.where(
         long_df["surface_matches_before"] > 0,
-        long_df["surface_wins_before"] / long_df["surface_matches_before"],
+        long_df["surface_wins_before"]
+        / long_df["surface_matches_before"],
         np.nan,
-    )
+        )
 
-    long_df["days_since_last_match"] = grouped["date"].diff().dt.days.astype(float)
+    # ------------------------------------------------------------------
+    # REST
+    # ------------------------------------------------------------------
+
+    long_df["days_since_last_match"] = (
+        long_df.groupby(
+            "player_name",
+            sort=False,
+        )["date"]
+        .diff()
+        .dt.days
+        .astype(float)
+    )
 
     history_cols = [
         "matches_before",
@@ -168,173 +400,602 @@ def build_player_history_features(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     winner_hist = (
-        long_df[["match_id", "player_name", *history_cols]]
+        long_df[
+            [
+                "match_id_internal",
+                "player_name",
+                *history_cols,
+            ]
+        ]
         .rename(
             columns={
                 "player_name": "winner_name",
-                **{col: f"winner_{col}" for col in history_cols},
+                **{
+                    c: f"winner_{c}"
+                    for c in history_cols
+                },
             }
         )
-        .drop_duplicates(subset=["match_id", "winner_name"], keep="last")
+        .drop_duplicates(
+            subset=[
+                "match_id_internal",
+                "winner_name",
+            ],
+            keep="last",
+        )
     )
 
     loser_hist = (
-        long_df[["match_id", "player_name", *history_cols]]
+        long_df[
+            [
+                "match_id_internal",
+                "player_name",
+                *history_cols,
+            ]
+        ]
         .rename(
             columns={
                 "player_name": "loser_name",
-                **{col: f"loser_{col}" for col in history_cols},
+                **{
+                    c: f"loser_{c}"
+                    for c in history_cols
+                },
             }
         )
-        .drop_duplicates(subset=["match_id", "loser_name"], keep="last")
+        .drop_duplicates(
+            subset=[
+                "match_id_internal",
+                "loser_name",
+            ],
+            keep="last",
+        )
     )
 
-    out = df.copy()
-    out["match_id"] = np.arange(len(out), dtype=np.int64)
-    out = out.merge(winner_hist, on=["match_id", "winner_name"], how="left")
-    out = out.merge(loser_hist, on=["match_id", "loser_name"], how="left")
-    out = out.drop(columns=["match_id"])
+    out = out.merge(
+        winner_hist,
+        on=[
+            "match_id_internal",
+            "winner_name",
+        ],
+        how="left",
+    )
+
+    out = out.merge(
+        loser_hist,
+        on=[
+            "match_id_internal",
+            "loser_name",
+        ],
+        how="left",
+    )
 
     return out
 
 
-def build_head_to_head_features(df: pd.DataFrame) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# HEAD TO HEAD
+# ---------------------------------------------------------------------------
+
+def build_head_to_head_features(
+        df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    H2H features are calculated strictly before the current match.
+
+    No global shift is used, because that can move information from one
+    player pair to another pair.
+    """
+
     out = df.copy()
 
-    out["pair_key"] = out.apply(
-        lambda row: "||".join(sorted([str(row["winner_name"]), str(row["loser_name"])])),
-        axis=1,
+    out["pair_key"] = (
+        out.apply(
+            lambda row: "||".join(
+                sorted(
+                    [
+                        str(row["winner_name"]),
+                        str(row["loser_name"]),
+                    ]
+                )
+            ),
+            axis=1,
+        )
     )
 
-    out["winner_is_player1"] = out.apply(
-        lambda row: int(str(row["winner_name"]) <= str(row["loser_name"])),
-        axis=1,
+    out["winner_is_player1"] = (
+        out.apply(
+            lambda row: int(
+                str(row["winner_name"])
+                <= str(row["loser_name"])
+            ),
+            axis=1,
+        )
     )
 
-    out = out.sort_values(["date", "pair_key"], kind="mergesort").reset_index(drop=True)
+    out = out.sort_values(
+        [
+            "pair_key",
+            "date",
+            "match_id_internal",
+        ],
+        kind="mergesort",
+    ).reset_index(drop=True)
 
-    out["h2h_matches_before"] = out.groupby("pair_key").cumcount().astype(float)
+    pair_group = out.groupby(
+        "pair_key",
+        sort=False,
+    )
 
-    out["winner_pair_win"] = out["winner_is_player1"].astype(float)
+    out["h2h_matches_before"] = (
+        pair_group.cumcount().astype(float)
+    )
+
+    # Current winner is player 1 -> 1
+    # Current winner is player 2 -> 0
+    current_player1_win = (
+        out["winner_is_player1"].astype(float)
+    )
+
+    # Again: cumulative result minus current result.
     out["pair_player1_wins_before"] = (
-        out.groupby("pair_key")["winner_pair_win"].cumsum().shift(1).fillna(0.0)
+            pair_group["winner_is_player1"]
+            .cumsum()
+            - current_player1_win
     )
 
     out["winner_h2h_wins_before"] = np.where(
         out["winner_is_player1"] == 1,
         out["pair_player1_wins_before"],
-        out["h2h_matches_before"] - out["pair_player1_wins_before"],
-    )
+        (
+                out["h2h_matches_before"]
+                - out["pair_player1_wins_before"]
+        ),
+        )
 
-    out["loser_h2h_wins_before"] = out["h2h_matches_before"] - out["winner_h2h_wins_before"]
+    out["loser_h2h_wins_before"] = (
+            out["h2h_matches_before"]
+            - out["winner_h2h_wins_before"]
+    )
 
     out["winner_h2h_win_rate_before"] = np.where(
         out["h2h_matches_before"] > 0,
-        out["winner_h2h_wins_before"] / out["h2h_matches_before"],
+        out["winner_h2h_wins_before"]
+        / out["h2h_matches_before"],
         np.nan,
-    )
+        )
 
     out["loser_h2h_win_rate_before"] = np.where(
         out["h2h_matches_before"] > 0,
-        out["loser_h2h_wins_before"] / out["h2h_matches_before"],
+        out["loser_h2h_wins_before"]
+        / out["h2h_matches_before"],
         np.nan,
+        )
+
+    return out.drop(
+        columns=[
+            "pair_key",
+            "winner_is_player1",
+            "pair_player1_wins_before",
+        ]
     )
 
-    return out.drop(columns=["pair_key", "winner_is_player1", "winner_pair_win", "pair_player1_wins_before"])
 
+# ---------------------------------------------------------------------------
+# MODEL FEATURES
+# ---------------------------------------------------------------------------
 
-def encode_round_ordinal(series: pd.Series) -> pd.Series:
-    encoder = OrdinalEncoder(
-        categories=[ORDINAL_ROUND_ORDER],
-        handle_unknown="use_encoded_value",
-        unknown_value=-1,
-    )
-    values = series.fillna("Unknown").to_numpy().reshape(-1, 1)
-    encoded = encoder.fit_transform(values).reshape(-1)
-    return pd.Series(encoded, index=series.index)
-
-
-def add_model_features(df: pd.DataFrame, rare_threshold: int) -> pd.DataFrame:
+def add_model_features(
+        df: pd.DataFrame,
+        rare_threshold: int,
+) -> pd.DataFrame:
     out = df.copy()
 
-    out["round_ordinal"] = encode_round_ordinal(out["round"]).astype(float)
+    # ---------------------------------------------------------------
+    # ROUND
+    # ---------------------------------------------------------------
 
-    out["winner_rank_missing"] = out["winner_rank"].isna().astype(int)
-    out["loser_rank_missing"] = out["loser_rank"].isna().astype(int)
-    out["winner_points_missing"] = out["winner_points"].isna().astype(int)
-    out["loser_points_missing"] = out["loser_points"].isna().astype(int)
+    if "round" in out.columns:
+        out["round_ordinal"] = encode_round_ordinal(
+            out["round"]
+        )
 
-    out["rank_diff"] = out["loser_rank"] - out["winner_rank"]
-    out["points_diff"] = out["winner_points"] - out["loser_points"]
+    # ---------------------------------------------------------------
+    # MISSING FLAGS
+    # ---------------------------------------------------------------
 
-    out["winner_implied_prob_avg"] = 1.0 / out["avg_winner"]
-    out["loser_implied_prob_avg"] = 1.0 / out["avg_loser"]
-    out.loc[out["avg_winner"].isna(), "winner_implied_prob_avg"] = np.nan
-    out.loc[out["avg_loser"].isna(), "loser_implied_prob_avg"] = np.nan
-    out["implied_prob_diff_avg"] = out["winner_implied_prob_avg"] - out["loser_implied_prob_avg"]
+    for column in [
+        "winner_rank",
+        "loser_rank",
+        "winner_points",
+        "loser_points",
+    ]:
+        if column in out.columns:
+            out[f"{column}_missing"] = (
+                out[column].isna().astype(int)
+            )
+
+    # ---------------------------------------------------------------
+    # RANK / POINT DIFFERENCES
+    # ---------------------------------------------------------------
+
+    if {
+        "winner_rank",
+        "loser_rank",
+    }.issubset(out.columns):
+        out["rank_diff"] = (
+                out["loser_rank"]
+                - out["winner_rank"]
+        )
+
+    if {
+        "winner_points",
+        "loser_points",
+    }.issubset(out.columns):
+        out["points_diff"] = (
+                out["winner_points"]
+                - out["loser_points"]
+        )
+
+    # ---------------------------------------------------------------
+    # BETTING MARKET
+    # ---------------------------------------------------------------
+
+    if "avg_winner" in out.columns:
+        out["winner_implied_prob_avg"] = (
+                1.0 / out["avg_winner"]
+        )
+
+    if "avg_loser" in out.columns:
+        out["loser_implied_prob_avg"] = (
+                1.0 / out["avg_loser"]
+        )
+
+    if {
+        "winner_implied_prob_avg",
+        "loser_implied_prob_avg",
+    }.issubset(out.columns):
+        out["implied_prob_diff_avg"] = (
+                out["winner_implied_prob_avg"]
+                - out["loser_implied_prob_avg"]
+        )
+
+    # ---------------------------------------------------------------
+    # PLAYER HISTORY DIFFERENCES
+    # ---------------------------------------------------------------
 
     history_pairs = [
-        ("matches_before", "experience_diff"),
-        ("win_rate_before", "win_rate_diff"),
-        ("recent5_win_rate_before", "recent5_win_rate_diff"),
-        ("surface_win_rate_before", "surface_win_rate_diff"),
-        ("days_since_last_match", "rest_days_diff"),
+        (
+            "matches_before",
+            "experience_diff",
+        ),
+        (
+            "win_rate_before",
+            "win_rate_diff",
+        ),
+        (
+            "recent5_win_rate_before",
+            "recent5_win_rate_diff",
+        ),
+        (
+            "surface_win_rate_before",
+            "surface_win_rate_diff",
+        ),
+        (
+            "days_since_last_match",
+            "rest_days_diff",
+        ),
+        (
+            "h2h_win_rate_before",
+            "h2h_win_rate_diff",
+        ),
     ]
 
-    for suffix, out_col in history_pairs:
-        out[out_col] = out[f"winner_{suffix}"] - out[f"loser_{suffix}"]
+    for suffix, output_column in history_pairs:
+        winner_col = f"winner_{suffix}"
+        loser_col = f"loser_{suffix}"
 
-    out["tournament_bucket"] = map_rare_categories(out["tournament"].fillna("Unknown"), rare_threshold)
-    out["location_bucket"] = map_rare_categories(out["location"].fillna("Unknown"), rare_threshold)
+        if {
+            winner_col,
+            loser_col,
+        }.issubset(out.columns):
+            out[output_column] = (
+                    out[winner_col]
+                    - out[loser_col]
+            )
 
-    out = out.sort_values("date", kind="mergesort").reset_index(drop=True)
+    # ---------------------------------------------------------------
+    # SACKMANN DIFFERENCES
+    # ---------------------------------------------------------------
+
+    sackmann_pairs = [
+        (
+            "height",
+            "height_diff",
+        ),
+        (
+            "age_years",
+            "age_diff",
+        ),
+        (
+            "ace_rate_before",
+            "ace_rate_diff",
+        ),
+        (
+            "df_rate_before",
+            "df_rate_diff",
+        ),
+        (
+            "first_in_rate_before",
+            "first_in_rate_diff",
+        ),
+        (
+            "first_won_rate_before",
+            "first_won_rate_diff",
+        ),
+        (
+            "second_won_rate_before",
+            "second_won_rate_diff",
+        ),
+        (
+            "bp_saved_rate_before",
+            "bp_saved_rate_diff",
+        ),
+        (
+            "bp_faced_per_sv_game_before",
+            "bp_faced_per_sv_game_diff",
+        ),
+    ]
+
+    for suffix, output_column in sackmann_pairs:
+        winner_col = f"winner_{suffix}"
+        loser_col = f"loser_{suffix}"
+
+        if {
+            winner_col,
+            loser_col,
+        }.issubset(out.columns):
+            out[output_column] = (
+                    out[winner_col]
+                    - out[loser_col]
+            )
+
+    # ---------------------------------------------------------------
+    # CATEGORICAL BUCKETS
+    # ---------------------------------------------------------------
+
+    if "tournament" in out.columns:
+        out["tournament_bucket"] = map_rare_categories(
+            out["tournament"],
+            rare_threshold,
+        )
+
+    if "location" in out.columns:
+        out["location_bucket"] = map_rare_categories(
+            out["location"],
+            rare_threshold,
+        )
+
+    out = out.sort_values(
+        [
+            "date",
+            "match_id_internal",
+        ],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
     return out
 
-def make_symmetric_dataset(df: pd.DataFrame) -> pd.DataFrame:
+
+# ---------------------------------------------------------------------------
+# SYMMETRIC DATASET
+# ---------------------------------------------------------------------------
+
+def make_symmetric_dataset(
+        df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Converts each real match:
+
+        winner vs loser -> player_a_win = 1
+
+    into two observations:
+
+        winner vs loser -> 1
+        loser vs winner -> 0
+
+    This removes dependence on the arbitrary winner/loser orientation.
+    """
+
     a_win = df.copy()
     a_win["player_a_win"] = 1
 
     a_lose = df.copy()
     a_lose["player_a_win"] = 0
 
-    swap_cols = [
+    # ---------------------------------------------------------------
+    # Swap player-specific variables
+    # ---------------------------------------------------------------
+
+    swap_pairs = [
         ("winner_rank", "loser_rank"),
         ("winner_points", "loser_points"),
         ("winner_rank_missing", "loser_rank_missing"),
         ("winner_points_missing", "loser_points_missing"),
+
         ("winner_matches_before", "loser_matches_before"),
+        ("winner_wins_before", "loser_wins_before"),
         ("winner_win_rate_before", "loser_win_rate_before"),
-        ("winner_recent5_win_rate_before", "loser_recent5_win_rate_before"),
-        ("winner_surface_win_rate_before", "loser_surface_win_rate_before"),
-        ("winner_days_since_last_match", "loser_days_since_last_match"),
-        ("winner_h2h_wins_before", "loser_h2h_wins_before"),
-        ("winner_h2h_win_rate_before", "loser_h2h_win_rate_before"),
-        ("winner_implied_prob_avg", "loser_implied_prob_avg"),
+
+        (
+            "winner_recent5_matches_before",
+            "loser_recent5_matches_before",
+        ),
+        (
+            "winner_recent5_wins_before",
+            "loser_recent5_wins_before",
+        ),
+        (
+            "winner_recent5_win_rate_before",
+            "loser_recent5_win_rate_before",
+        ),
+
+        (
+            "winner_surface_matches_before",
+            "loser_surface_matches_before",
+        ),
+        (
+            "winner_surface_wins_before",
+            "loser_surface_wins_before",
+        ),
+        (
+            "winner_surface_win_rate_before",
+            "loser_surface_win_rate_before",
+        ),
+
+        (
+            "winner_days_since_last_match",
+            "loser_days_since_last_match",
+        ),
+
+        (
+            "winner_h2h_wins_before",
+            "loser_h2h_wins_before",
+        ),
+        (
+            "winner_h2h_win_rate_before",
+            "loser_h2h_win_rate_before",
+        ),
+
+        (
+            "winner_height",
+            "loser_height",
+        ),
+        (
+            "winner_age_years",
+            "loser_age_years",
+        ),
+
+        (
+            "winner_ace_rate_before",
+            "loser_ace_rate_before",
+        ),
+        (
+            "winner_df_rate_before",
+            "loser_df_rate_before",
+        ),
+        (
+            "winner_first_in_rate_before",
+            "loser_first_in_rate_before",
+        ),
+        (
+            "winner_first_won_rate_before",
+            "loser_first_won_rate_before",
+        ),
+        (
+            "winner_second_won_rate_before",
+            "loser_second_won_rate_before",
+        ),
+        (
+            "winner_bp_saved_rate_before",
+            "loser_bp_saved_rate_before",
+        ),
+        (
+            "winner_bp_faced_per_sv_game_before",
+            "loser_bp_faced_per_sv_game_before",
+        ),
+
+        (
+            "winner_implied_prob_avg",
+            "loser_implied_prob_avg",
+        ),
     ]
 
-    for left, right in swap_cols:
+    for left, right in swap_pairs:
         if left in a_lose.columns and right in a_lose.columns:
-            a_lose[left], a_lose[right] = a_lose[right].copy(), a_lose[left].copy()
+            tmp = a_lose[left].copy()
+            a_lose[left] = a_lose[right].copy()
+            a_lose[right] = tmp
 
-    sign_flip_cols = [
+    # ---------------------------------------------------------------
+    # Swap player names / Sackmann IDs / hand
+    # ---------------------------------------------------------------
+
+    generic_swap_pairs = [
+        ("winner_name", "loser_name"),
+        ("winner_sackmann_id", "loser_sackmann_id"),
+        ("winner_hand", "loser_hand"),
+        ("winner_ioc", "loser_ioc"),
+    ]
+
+    for left, right in generic_swap_pairs:
+        if left in a_lose.columns and right in a_lose.columns:
+            tmp = a_lose[left].copy()
+            a_lose[left] = a_lose[right].copy()
+            a_lose[right] = tmp
+
+    # ---------------------------------------------------------------
+    # Flip difference features
+    # ---------------------------------------------------------------
+
+    sign_flip_columns = [
         "rank_diff",
         "points_diff",
         "implied_prob_diff_avg",
+
         "experience_diff",
         "win_rate_diff",
         "recent5_win_rate_diff",
         "surface_win_rate_diff",
         "rest_days_diff",
-    ]
-    for c in sign_flip_cols:
-        if c in a_lose.columns:
-            a_lose[c] = -a_lose[c]
+        "h2h_win_rate_diff",
 
-    out = pd.concat([a_win, a_lose], ignore_index=True)
-    out = out.sort_values("date", kind="mergesort").reset_index(drop=True)
+        "height_diff",
+        "age_diff",
+        "ace_rate_diff",
+        "df_rate_diff",
+        "first_in_rate_diff",
+        "first_won_rate_diff",
+        "second_won_rate_diff",
+        "bp_saved_rate_diff",
+        "bp_faced_per_sv_game_diff",
+    ]
+
+    for column in sign_flip_columns:
+        if column in a_lose.columns:
+            a_lose[column] = -a_lose[column]
+
+    out = pd.concat(
+        [
+            a_win,
+            a_lose,
+        ],
+        ignore_index=True,
+    )
+
+    out = out.sort_values(
+        [
+            "date",
+            "match_id_internal",
+            "player_a_win",
+        ],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
     return out
 
-def build_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str], list[str]]:
+
+# ---------------------------------------------------------------------------
+# FEATURE MATRIX
+# ---------------------------------------------------------------------------
+
+def build_feature_matrix(
+        df: pd.DataFrame,
+) -> tuple[
+    pd.DataFrame,
+    pd.Series,
+    list[str],
+    list[str],
+]:
     categorical_features = [
         "series",
         "court",
@@ -344,63 +1005,158 @@ def build_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, lis
     ]
 
     numeric_features = [
+        # Tournament/match
         "source_year",
         "atp",
         "best_of",
+        "round_ordinal",
+
+        # Ranking
         "winner_rank",
         "loser_rank",
-        "winner_points",
-        "loser_points",
+        "rank_diff",
+
+        # Ranking missingness
         "winner_rank_missing",
         "loser_rank_missing",
+
+        # Points
+        "winner_points",
+        "loser_points",
+        "points_diff",
         "winner_points_missing",
         "loser_points_missing",
-        "rank_diff",
-        "points_diff",
+
+        # Market
         "has_any_market_odds",
         "winner_implied_prob_avg",
         "loser_implied_prob_avg",
         "implied_prob_diff_avg",
-        "round_ordinal",
+
+        # Global player history
         "winner_matches_before",
         "loser_matches_before",
         "experience_diff",
+
         "winner_win_rate_before",
         "loser_win_rate_before",
         "win_rate_diff",
+
+        # Recent form
         "winner_recent5_win_rate_before",
         "loser_recent5_win_rate_before",
         "recent5_win_rate_diff",
+
+        # Surface
         "winner_surface_win_rate_before",
         "loser_surface_win_rate_before",
         "surface_win_rate_diff",
+
+        # Rest
         "winner_days_since_last_match",
         "loser_days_since_last_match",
         "rest_days_diff",
+
+        # H2H
         "h2h_matches_before",
         "winner_h2h_win_rate_before",
         "loser_h2h_win_rate_before",
+        "h2h_win_rate_diff",
+
+        # Sackmann physical
+        "winner_height",
+        "loser_height",
+        "height_diff",
+
+        "winner_age_years",
+        "loser_age_years",
+        "age_diff",
+
+        # Sackmann serve/return
+        "winner_ace_rate_before",
+        "loser_ace_rate_before",
+        "ace_rate_diff",
+
+        "winner_df_rate_before",
+        "loser_df_rate_before",
+        "df_rate_diff",
+
+        "winner_first_in_rate_before",
+        "loser_first_in_rate_before",
+        "first_in_rate_diff",
+
+        "winner_first_won_rate_before",
+        "loser_first_won_rate_before",
+        "first_won_rate_diff",
+
+        "winner_second_won_rate_before",
+        "loser_second_won_rate_before",
+        "second_won_rate_diff",
+
+        "winner_bp_saved_rate_before",
+        "loser_bp_saved_rate_before",
+        "bp_saved_rate_diff",
+
+        "winner_bp_faced_per_sv_game_before",
+        "loser_bp_faced_per_sv_game_before",
+        "bp_faced_per_sv_game_diff",
     ]
 
-    available_categorical = [c for c in categorical_features if c in df.columns]
-    available_numeric = [c for c in numeric_features if c in df.columns]
+    available_categorical = [
+        c
+        for c in categorical_features
+        if c in df.columns
+    ]
 
-    X = df[available_numeric + available_categorical].copy()
+    available_numeric = [
+        c
+        for c in numeric_features
+        if c in df.columns
+    ]
+
+    if "player_a_win" not in df.columns:
+        raise ValueError(
+            "Missing target column 'player_a_win'."
+        )
+
+    X = df[
+        available_numeric
+        + available_categorical
+        ].copy()
+
     y = df["player_a_win"].astype(int)
 
-    return X, y, available_numeric, available_categorical
+    return (
+        X,
+        y,
+        available_numeric,
+        available_categorical,
+    )
 
+
+# ---------------------------------------------------------------------------
+# MODEL / RFECV
+# ---------------------------------------------------------------------------
 
 def run_baseline_and_rfecv(
-    X: pd.DataFrame,
-    y: pd.Series,
-    numeric_features: list[str],
-    categorical_features: list[str],
-    rfecv_step: int,
-    rfecv_min_features: int,
+        X: pd.DataFrame,
+        y: pd.Series,
+        numeric_features: list[str],
+        categorical_features: list[str],
+        rfecv_step: int,
+        rfecv_min_features: int,
 ) -> dict:
-    split_count = max(3, min(5, len(X) // 500))
-    cv = TimeSeriesSplit(n_splits=split_count)
+
+    if len(X) < 1000:
+        split_count = 3
+    elif len(X) < 5000:
+        split_count = 4
+    else:
+        split_count = 5
+
+    cv = TimeSeriesSplit(
+        n_splits=split_count
+    )
 
     preprocess = ColumnTransformer(
         transformers=[
@@ -408,8 +1164,16 @@ def run_baseline_and_rfecv(
                 "num",
                 Pipeline(
                     steps=[
-                        ("imputer", SimpleImputer(strategy="median")),
-                        ("scaler", StandardScaler()),
+                        (
+                            "imputer",
+                            SimpleImputer(
+                                strategy="median"
+                            ),
+                        ),
+                        (
+                            "scaler",
+                            StandardScaler(),
+                        ),
                     ]
                 ),
                 numeric_features,
@@ -418,8 +1182,18 @@ def run_baseline_and_rfecv(
                 "cat",
                 Pipeline(
                     steps=[
-                        ("imputer", SimpleImputer(strategy="most_frequent")),
-                        ("onehot", OneHotEncoder(handle_unknown="ignore")),
+                        (
+                            "imputer",
+                            SimpleImputer(
+                                strategy="most_frequent"
+                            ),
+                        ),
+                        (
+                            "onehot",
+                            OneHotEncoder(
+                                handle_unknown="ignore",
+                            ),
+                        ),
                     ]
                 ),
                 categorical_features,
@@ -433,13 +1207,26 @@ def run_baseline_and_rfecv(
         random_state=42,
         n_jobs=-1,
         class_weight="balanced_subsample",
+        min_samples_leaf=2,
     )
 
     baseline_pipeline = Pipeline(
         steps=[
-            ("preprocess", preprocess),
-            ("model", baseline_model),
+            (
+                "preprocess",
+                preprocess,
+            ),
+            (
+                "model",
+                baseline_model,
+            ),
         ]
+    )
+
+    print()
+    print("MODEL BASELINE")
+    print(
+        f"TimeSeriesSplit: {split_count} folds"
     )
 
     baseline_scores = cross_val_score(
@@ -451,56 +1238,344 @@ def run_baseline_and_rfecv(
         n_jobs=-1,
     )
 
+    # ---------------------------------------------------------------
+    # RFECV
+    #
+    # We transform once here only for feature-selection diagnostics.
+    # The baseline CV above remains the primary unbiased estimate.
+    # ---------------------------------------------------------------
+
+    print()
+    print("Preparing RFECV matrix...")
+
     prefit = preprocess.fit(X, y)
+
     X_prepared = prefit.transform(X)
-    feature_names = prefit.get_feature_names_out().tolist()
+
+    feature_names = (
+        prefit
+        .get_feature_names_out()
+        .tolist()
+    )
 
     selector_model = RandomForestClassifier(
-        n_estimators=300,
+        n_estimators=100,
+        max_depth=12,
         random_state=42,
         n_jobs=-1,
         class_weight="balanced_subsample",
+        min_samples_leaf=2,
+    )
+
+    max_features = max(
+        1,
+        X_prepared.shape[1] - 1,
+        )
+
+    min_features = min(
+        rfecv_min_features,
+        max_features,
+    )
+
+    print(
+        f"Encoded feature count: "
+        f"{X_prepared.shape[1]}"
+    )
+
+    print(
+        f"RFECV minimum features: "
+        f"{min_features}"
     )
 
     rfecv = RFECV(
         estimator=selector_model,
         step=rfecv_step,
-        min_features_to_select=min(rfecv_min_features, max(1, X_prepared.shape[1] - 1)),
+        min_features_to_select=min_features,
         cv=cv,
         scoring="accuracy",
         n_jobs=-1,
+        verbose=2,
     )
 
-    rfecv.fit(X_prepared, y)
+    rfecv.fit(
+        X_prepared,
+        y,
+    )
 
     support_mask = rfecv.support_
-    selected_feature_names = [name for name, keep in zip(feature_names, support_mask) if keep]
 
-    baseline_pipeline.fit(X, y)
-    train_predictions = baseline_pipeline.predict(X)
+    selected_feature_names = [
+        name
+        for name, keep in zip(
+            feature_names,
+            support_mask,
+        )
+        if keep
+    ]
+
+    # ---------------------------------------------------------------
+    # Train accuracy is diagnostic only.
+    # Do NOT use it as generalisation performance.
+    # ---------------------------------------------------------------
+
+    baseline_pipeline.fit(
+        X,
+        y,
+    )
+
+    train_predictions = (
+        baseline_pipeline.predict(X)
+    )
 
     return {
         "samples": int(len(X)),
-        "baseline_cv_accuracy_mean": float(np.mean(baseline_scores)),
-        "baseline_cv_accuracy_std": float(np.std(baseline_scores)),
-        "baseline_train_accuracy": float(accuracy_score(y, train_predictions)),
-        "baseline_feature_count": int(len(feature_names)),
-        "rfecv_selected_feature_count": int(rfecv.n_features_),
-        "rfecv_selected_features": selected_feature_names,
-        "rfecv_best_cv_accuracy": float(np.max(rfecv.cv_results_["mean_test_score"])),
-        "rfecv_cv_accuracy_path": [float(v) for v in rfecv.cv_results_["mean_test_score"]],
+        "cv_folds": int(split_count),
+
+        "baseline_cv_accuracy_mean": float(
+            np.mean(baseline_scores)
+        ),
+
+        "baseline_cv_accuracy_std": float(
+            np.std(baseline_scores)
+        ),
+
+        "baseline_cv_accuracy_folds": [
+            float(v)
+            for v in baseline_scores
+        ],
+
+        "baseline_train_accuracy": float(
+            accuracy_score(
+                y,
+                train_predictions,
+            )
+        ),
+
+        "baseline_feature_count": int(
+            len(feature_names)
+        ),
+
+        "rfecv_selected_feature_count": int(
+            rfecv.n_features_
+        ),
+
+        "rfecv_selected_features":
+            selected_feature_names,
+
+        "rfecv_best_cv_accuracy": float(
+            np.max(
+                rfecv.cv_results_[
+                    "mean_test_score"
+                ]
+            )
+        ),
+
+        "rfecv_cv_accuracy_path": [
+            float(v)
+            for v in
+            rfecv.cv_results_[
+                "mean_test_score"
+            ]
+        ],
     }
 
+
+# ---------------------------------------------------------------------------
+# VALIDATION
+# ---------------------------------------------------------------------------
+
+def validate_features(
+        df: pd.DataFrame,
+) -> None:
+
+    print()
+    print("FEATURE VALIDATION")
+
+    problems = []
+
+    # Probability/rate columns should remain in [0, 1].
+    rate_columns = [
+        c
+        for c in df.columns
+        if (
+                c.endswith("_rate_before")
+                or c.endswith("_win_rate_before")
+                or c.endswith("_rate_diff")
+        )
+    ]
+
+    for column in rate_columns:
+        values = pd.to_numeric(
+            df[column],
+            errors="coerce",
+        ).dropna()
+
+        if len(values) == 0:
+            continue
+
+        if column.endswith("_diff"):
+            continue
+
+        invalid = (
+                (values < 0)
+                | (values > 1)
+        ).sum()
+
+        if invalid:
+            problems.append(
+                f"{column}: "
+                f"{invalid} values outside [0,1]"
+            )
+
+    # Age sanity check.
+    for column in [
+        "winner_age_years",
+        "loser_age_years",
+    ]:
+        if column not in df.columns:
+            continue
+
+        values = pd.to_numeric(
+            df[column],
+            errors="coerce",
+        ).dropna()
+
+        invalid = (
+                (values < 14)
+                | (values > 60)
+        ).sum()
+
+        if invalid:
+            problems.append(
+                f"{column}: "
+                f"{invalid} implausible ages"
+            )
+
+    if problems:
+        print("PROBLEMS FOUND:")
+
+        for problem in problems:
+            print(f"  - {problem}")
+
+        raise ValueError(
+            "Feature validation failed."
+        )
+
+    print("OK - nessuna anomalia rilevante.")
+
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     args = parse_args()
 
-    cleaned_df = load_clean_data(args.input)
-    with_hist = build_player_history_features(cleaned_df)
-    with_h2h = build_head_to_head_features(with_hist)
-    featured_df = add_model_features(with_h2h, rare_threshold=args.rare_threshold)
-    featured_df = make_symmetric_dataset(featured_df)
-    X, y, numeric_features, categorical_features = build_feature_matrix(featured_df)
+    print("=" * 70)
+    print("BUILD FEATURES")
+    print("=" * 70)
+
+    print()
+    print(
+        f"Input: {args.input}"
+    )
+
+    # ---------------------------------------------------------------
+    # Load
+    # ---------------------------------------------------------------
+
+    df = load_clean_data(
+        args.input
+    )
+
+    print(
+        f"Match caricati: {len(df):,}"
+    )
+
+    # ---------------------------------------------------------------
+    # Historical player features
+    # ---------------------------------------------------------------
+
+    print()
+    print(
+        "Costruzione storico giocatori..."
+    )
+
+    df = build_player_history_features(
+        df
+    )
+
+    # ---------------------------------------------------------------
+    # H2H
+    # ---------------------------------------------------------------
+
+    print(
+        "Costruzione feature H2H..."
+    )
+
+    df = build_head_to_head_features(
+        df
+    )
+
+    # ---------------------------------------------------------------
+    # Model features
+    # ---------------------------------------------------------------
+
+    print(
+        "Costruzione feature modello..."
+    )
+
+    df = add_model_features(
+        df,
+        rare_threshold=args.rare_threshold,
+    )
+
+    # ---------------------------------------------------------------
+    # Validation before symmetry
+    # ---------------------------------------------------------------
+
+    validate_features(df)
+
+    # ---------------------------------------------------------------
+    # Symmetric representation
+    # ---------------------------------------------------------------
+
+    print()
+    print(
+        "Costruzione dataset simmetrico..."
+    )
+
+    df = make_symmetric_dataset(
+        df
+    )
+
+    print(
+        f"Righe finali dopo simmetrizzazione: "
+        f"{len(df):,}"
+    )
+
+    # ---------------------------------------------------------------
+    # Feature matrix
+    # ---------------------------------------------------------------
+
+    X, y, numeric_features, categorical_features = (
+        build_feature_matrix(df)
+    )
+
+    print()
+    print(
+        f"Feature numeriche: "
+        f"{len(numeric_features)}"
+    )
+
+    print(
+        f"Feature categoriche: "
+        f"{len(categorical_features)}"
+    )
+
+    # ---------------------------------------------------------------
+    # Model
+    # ---------------------------------------------------------------
 
     metrics = run_baseline_and_rfecv(
         X,
@@ -511,30 +1586,161 @@ def main() -> None:
         rfecv_min_features=args.rfecv_min_features,
     )
 
-    args.output_features.parent.mkdir(parents=True, exist_ok=True)
-    featured_df.to_csv(args.output_features, index=False)
+    # ---------------------------------------------------------------
+    # Remove internal column from saved dataset
+    # ---------------------------------------------------------------
+
+    if "match_id_internal" in df.columns:
+        df = df.drop(
+            columns=["match_id_internal"]
+        )
+
+    # ---------------------------------------------------------------
+    # Save features
+    # ---------------------------------------------------------------
+
+    args.output_features.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    df.to_csv(
+        args.output_features,
+        index=False,
+    )
+
+    # ---------------------------------------------------------------
+    # Metadata
+    # ---------------------------------------------------------------
 
     metadata = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "input_path": str(args.input),
-        "output_features_path": str(args.output_features),
-        "output_rows": int(len(featured_df)),
-        "output_columns": list(featured_df.columns),
-        "categorical_features": categorical_features,
-        "numeric_features": numeric_features,
-        "rare_threshold": int(args.rare_threshold),
-        "rfecv_step": int(args.rfecv_step),
-        "rfecv_min_features": int(args.rfecv_min_features),
+        "created_at_utc": (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        ),
+
+        "input_path": str(
+            args.input
+        ),
+
+        "output_features_path": str(
+            args.output_features
+        ),
+
+        "output_rows": int(
+            len(df)
+        ),
+
+        "output_columns": list(
+            df.columns
+        ),
+
+        "numeric_features": (
+            numeric_features
+        ),
+
+        "categorical_features": (
+            categorical_features
+        ),
+
+        "rare_threshold": int(
+            args.rare_threshold
+        ),
+
+        "rfecv_step": int(
+            args.rfecv_step
+        ),
+
+        "rfecv_min_features": int(
+            args.rfecv_min_features
+        ),
+
         "metrics": metrics,
     }
 
-    args.output_metadata.parent.mkdir(parents=True, exist_ok=True)
-    args.output_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    args.output_metadata.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    print(f"Created feature dataset: {args.output_features}")
-    print(f"Created feature metadata: {args.output_metadata}")
-    print(f"Baseline CV accuracy (mean): {metrics['baseline_cv_accuracy_mean']:.4f}")
-    print(f"RFECV selected features: {metrics['rfecv_selected_feature_count']}")
+    args.output_metadata.write_text(
+        json.dumps(
+            metadata,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    # ---------------------------------------------------------------
+    # Report
+    # ---------------------------------------------------------------
+
+    print()
+    print("=" * 70)
+    print("FEATURE BUILD COMPLETATO")
+    print("=" * 70)
+
+    print(
+        f"Dataset: "
+        f"{args.output_features}"
+    )
+
+    print(
+        f"Shape: "
+        f"{df.shape}"
+    )
+
+    print()
+    print(
+        "BASELINE"
+    )
+
+    print(
+        "CV accuracy mean: "
+        f"{metrics['baseline_cv_accuracy_mean']:.4f}"
+    )
+
+    print(
+        "CV accuracy std:  "
+        f"{metrics['baseline_cv_accuracy_std']:.4f}"
+    )
+
+    print(
+        "CV folds: "
+        f"{metrics['baseline_cv_accuracy_folds']}"
+    )
+
+    print()
+    print(
+        "RFECV"
+    )
+
+    print(
+        "Feature iniziali dopo encoding: "
+        f"{metrics['baseline_feature_count']}"
+    )
+
+    print(
+        "Feature selezionate: "
+        f"{metrics['rfecv_selected_feature_count']}"
+    )
+
+    print(
+        "Best RFECV CV accuracy: "
+        f"{metrics['rfecv_best_cv_accuracy']:.4f}"
+    )
+
+    print()
+    print(
+        "Metadata:"
+        f" {args.output_metadata}"
+    )
+
+    print()
+    print(
+        "Pipeline completata."
+    )
 
 
 if __name__ == "__main__":
