@@ -83,3 +83,18 @@ Run the linter with:
 ```bash
 uv run ruff check .
 ```
+
+
+## Feature engineering
+
+Build pre-match engineered features from cleaned data and run baseline vs RFECV feature selection:
+
+```bash
+uv run python scripts/data_cleaner/build_features.py
+```
+
+This produces:
+- `data/interim/tennis_matches_features.data`
+- `data/interim/tennis_matches_features_metadata.json`
+
+The metadata file includes baseline cross-validation accuracy, RFECV best score, and selected features.
