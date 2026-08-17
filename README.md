@@ -6,7 +6,9 @@ This project aims to predict the outcomes of ATP tennis matches using historical
 
 The primary data source is the yearly Excel files from Tennis-Data, containing historical ATP match results and related match statistics.
 
-Additional player and match statistics are obtained from the Jeff Sackmann Tennis ATP dataset. These data are used to enrich the dataset with player characteristics and historical service and return statistics.
+Additional player and match statistics are obtained from the [Jeff Sackmann Tennis ATP dataset](https://github.com/JeffSackmann/tennis_atp). These data are used to enrich the dataset with player characteristics and historical service and return statistics.
+
+Raw Tennis-Data files and the external Sackmann repository are local inputs and are not committed to Git.
 
 ## Installation
 
@@ -22,14 +24,24 @@ Clone the repository and install the project dependencies:
 uv sync
 ```
 
-## Download the data
+## Data Pipeline
+
+The reproducible pipeline is:
+
+1. Download yearly Tennis-Data workbooks.
+2. Merge the workbooks into one canonical CSV file.
+3. Normalize and clean the match data.
+4. Enrich the cleaned data with pre-match Sackmann features.
+5. Build the final feature dataset and run baseline modeling and RFECV.
+
+### Download Tennis-Data
 
 Raw Tennis-Data Excel files are downloaded into `data/raw/`. These files are local-only and are not committed to Git.
 
 To download a range of yearly files:
 
 ```bash
-uv run python scripts/download_data.py --start-year 2015 --end-year 2026
+uv run python scripts/data_downloader/download_data.py --start-year 2015 --end-year 2026
 ```
 
 The download script also generates `data/raw/manifest.json`, which records the source URL, local path, file size, SHA-256 checksum, and raw-data policy for each downloaded file.
@@ -37,28 +49,74 @@ The download script also generates `data/raw/manifest.json`, which records the s
 If the Excel files are already available locally and only the manifest needs to be regenerated:
 
 ```bash
-uv run python scripts/create_manifest.py --start-year 2015 --end-year 2026
+uv run python scripts/data_downloader/create_manifest.py --start-year 2015 --end-year 2026
 ```
 
-The yearly Excel files can then be merged into a single CSV file using:
+The yearly Excel files can then be merged into `data/interim/tennis_matches_raw.data` using:
 
 ```bash
-uv run python scripts/merge_tennis_excel.py
+uv run --directory scripts/data_downloader python merge_tennis_excel.py
 ```
 
-## Data Preparation
+### Normalize the data
 
-The initial data cleaning and preparation are performed in `classification.ipynb`, located in the `docs` directory. This step includes cleaning the raw Tennis-Data data and preparing the dataset for the subsequent analysis.
+Normalize the merged data before adding historical features:
+
+```bash
+uv run python scripts/data_cleaner/normalize_data.py
+```
+
+This step removes duplicate and incomplete matches, drops post-match score columns, normalizes dates and categories, and treats invalid ranks, points, and odds as missing. It writes `data/interim/tennis_matches_cleaned.data`.
+
+The `docs/classification.ipynb` notebook remains available for exploratory analysis.
+
+### Enrich with Sackmann data
+
+Clone the external dataset, or place an equivalent local checkout containing `atp_players.csv` and the required `atp_matches_YYYY.csv` files:
+
+```bash
+git clone --depth 1 https://github.com/JeffSackmann/tennis_atp.git external/tennis_atp
+```
+
+Run the enrichment step:
+
+```bash
+uv run python scripts/data_cleaner/enrich_with_sackmann.py \
+  --sackmann-dir external/tennis_atp
+```
+
+The script writes `data/interim/tennis_matches_enriched.data` and the name-resolution report `data/interim/sackmann_name_matching_review.csv`. It adds player height, hand, age, and historical ace, double-fault, first-serve, second-serve, and break-point statistics. Historical values are matched using only data before the current match; matches played on the same date are excluded. Ambiguous or unresolved player names are retained in the report rather than being guessed.
 
 ## Feature Engineering and Modeling
 
-The feature engineering and modeling pipeline builds pre-match features using only information available before each match, in order to avoid data leakage.
+Build features from the enriched dataset and run the baseline model and RFECV feature selection:
 
-The features include player ranking and experience, recent form, surface-specific performance, rest time, head-to-head statistics, market odds, and historical service and return statistics obtained from the Jeff Sackmann dataset.
+```bash
+uv run python scripts/data_cleaner/build_features.py
+```
 
-The dataset is also symmetrized by generating a second observation for each match with the players' roles reversed. This makes the model independent of the arbitrary order in which the players are presented.
+The command accepts `--input`, `--output-features`, and `--output-metadata` path overrides. The main tuning options are `--rare-threshold`, `--rfecv-step`, and `--rfecv-min-features`.
 
-The resulting dataset is used to train and evaluate machine learning models using time-based cross-validation.
+The feature-building pipeline uses only information available before each match, in order to avoid data leakage. It creates:
+
+- Global player experience and win rate.
+- Recent five-match form.
+- Surface-specific history and rest time.
+- Head-to-head history.
+- Ranking, ranking/points differences, and market-implied probabilities.
+- Tournament and location category buckets.
+- Sackmann player biography and historical serve/return statistics.
+
+Each real match is represented twice in the model data: once in the original orientation and once with the players swapped. The target column is `player_a_win`, which removes dependence on the arbitrary winner/loser orientation.
+
+The resulting dataset is used to train a `RandomForestClassifier`. Evaluation uses `TimeSeriesSplit` cross-validation, with the baseline cross-validation score used as the primary generalization estimate. RFECV reports a diagnostic best score and selected encoded features.
+
+The command produces:
+
+- `data/interim/tennis_matches_features.data`
+- `data/interim/tennis_matches_features_metadata.json`
+
+The metadata file records the input and output schema, feature lists, pipeline parameters, baseline fold scores, RFECV scores, and selected features.
 
 ## Run locally
 
@@ -83,18 +141,3 @@ Run the linter with:
 ```bash
 uv run ruff check .
 ```
-
-
-## Feature engineering
-
-Build pre-match engineered features from cleaned data and run baseline vs RFECV feature selection:
-
-```bash
-uv run python scripts/data_cleaner/build_features.py
-```
-
-This produces:
-- `data/interim/tennis_matches_features.data`
-- `data/interim/tennis_matches_features_metadata.json`
-
-The metadata file includes baseline cross-validation accuracy, RFECV best score, and selected features.
