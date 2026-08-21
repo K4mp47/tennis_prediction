@@ -33,6 +33,7 @@ The reproducible pipeline is:
 3. Normalize and clean the match data.
 4. Enrich the cleaned data with pre-match Sackmann features.
 5. Build the final feature dataset and run baseline modeling and RFECV.
+6. Train and evaluate the machine learning models.
 
 ### Download Tennis-Data
 
@@ -68,7 +69,7 @@ uv run python scripts/data_cleaner/normalize_data.py
 
 This step removes duplicate and incomplete matches, drops post-match score columns, normalizes dates and categories, and treats invalid ranks, points, and odds as missing. It writes `data/interim/tennis_matches_cleaned.data`.
 
-The `docs/classification.ipynb` notebook remains available for exploratory analysis.
+The `docs/classification.ipynb` notebook remains available for exploratory analysis and represents a separate data-analysis path from the normalization/enrichment pipeline described above.
 
 ### Enrich with Sackmann data
 
@@ -85,38 +86,148 @@ uv run python scripts/data_cleaner/enrich_with_sackmann.py \
   --sackmann-dir external/tennis_atp
 ```
 
-The script writes `data/interim/tennis_matches_enriched.data` and the name-resolution report `data/interim/sackmann_name_matching_review.csv`. It adds player height, hand, age, and historical ace, double-fault, first-serve, second-serve, and break-point statistics. Historical values are matched using only data before the current match; matches played on the same date are excluded. Ambiguous or unresolved player names are retained in the report rather than being guessed.
+The script writes `data/interim/tennis_matches_enriched.data` and the name-resolution report `data/interim/sackmann_name_matching_review.csv`.
 
-## Feature Engineering and Modeling
+It adds player height, hand, age, and historical ace, double-fault, first-serve, second-serve, and break-point statistics. Historical values are matched using only data before the current match; matches played on the same date are excluded. Ambiguous or unresolved player names are retained in the report rather than being guessed.
 
-Build features from the enriched dataset and run the baseline model and RFECV feature selection:
+## Feature Engineering
+
+Build the final feature dataset from the enriched data:
 
 ```bash
-uv run python scripts/data_cleaner/build_features.py
+uv run python scripts/data_cleaner/build_features.py \
+  --input data/interim/tennis_matches_enriched.data \
+  --rare-threshold 50 \
+  --rfecv-step 15 \
+  --rfecv-min-features 15
 ```
 
 The command accepts `--input`, `--output-features`, and `--output-metadata` path overrides. The main tuning options are `--rare-threshold`, `--rfecv-step`, and `--rfecv-min-features`.
 
 The feature-building pipeline uses only information available before each match, in order to avoid data leakage. It creates:
 
-- Global player experience and win rate.
-- Recent five-match form.
-- Surface-specific history and rest time.
-- Head-to-head history.
-- Ranking, ranking/points differences, and market-implied probabilities.
-- Tournament and location category buckets.
-- Sackmann player biography and historical serve/return statistics.
+* Global player experience and win rate.
+* Recent five-match form.
+* Surface-specific history and rest time.
+* Head-to-head history.
+* Ranking, ranking/points differences, and market-implied probabilities.
+* Tournament and location category buckets.
+* Sackmann player biography and historical serve/return statistics.
 
 Each real match is represented twice in the model data: once in the original orientation and once with the players swapped. The target column is `player_a_win`, which removes dependence on the arbitrary winner/loser orientation.
 
-The resulting dataset is used to train a `RandomForestClassifier`. Evaluation uses `TimeSeriesSplit` cross-validation, with the baseline cross-validation score used as the primary generalization estimate. RFECV reports a diagnostic best score and selected encoded features.
+For the current dataset, the feature-building pipeline produced 56,292 rows, corresponding to 28,146 real matches and their mirrored representations. RFECV reduced the encoded feature space from 270 features to 135 selected features, with a best RFECV cross-validation accuracy of 0.6809.
+
+The resulting dataset is used as input for the machine learning models.
 
 The command produces:
 
-- `data/interim/tennis_matches_features.data`
-- `data/interim/tennis_matches_features_metadata.json`
+* `data/interim/tennis_matches_features.data`
+* `data/interim/tennis_matches_features_metadata.json`
 
 The metadata file records the input and output schema, feature lists, pipeline parameters, baseline fold scores, RFECV scores, and selected features.
+
+## Machine Learning Models
+
+### Random Forest
+
+The feature dataset is used to train a `RandomForestClassifier` as one of the project's predictive models.
+
+Evaluation uses chronological `TimeSeriesSplit` cross-validation. The temporal ordering prevents future matches from being used to train models evaluated on earlier data.
+
+The Random Forest is intended as a higher-capacity ensemble model and provides a reference point for comparison with the single Decision Tree.
+
+### Decision Tree with Gini criterion
+
+A second predictive model is implemented using a `DecisionTreeClassifier` with the Gini impurity criterion.
+
+Train the model with:
+
+```bash
+uv run python scripts/models/train_decision_tree.py \
+  --input data/interim/tennis_matches_features.data \
+  --metadata data/interim/tennis_matches_features_metadata.json
+```
+
+The Decision Tree training pipeline:
+
+* Uses `criterion="gini"`.
+* Reserves the last 15% of unique dates as a chronological holdout set.
+* Uses five cross-validation folds based on unique dates.
+* Keeps the two mirrored observations of the same match in the same fold.
+* Performs grid search over tree depth, minimum leaf size, minimum split size, and cost-complexity pruning.
+* Evaluates the selected model on the final chronological holdout, which is not used during hyperparameter tuning.
+* Reports feature importances and tree structure.
+
+For the current dataset, the best model using all features selected:
+
+```text
+max_depth = 4
+min_samples_leaf = 1
+min_samples_split = 2
+ccp_alpha = 0.001
+```
+
+The resulting performance was:
+
+| Model                               | CV accuracy | Holdout accuracy |
+| ----------------------------------- | ----------: | ---------------: |
+| Decision Tree — with market odds    |      0.6822 |           0.6864 |
+| Decision Tree — without market odds |      0.6390 |           0.6492 |
+
+### Analysis of market odds
+
+The Decision Tree using all features assigns essentially all feature importance to:
+
+```text
+implied_prob_diff_avg
+```
+
+with an importance of 1.0000. This indicates that the market-implied probability difference is highly predictive and that the tree can obtain most of its predictive power from this single feature.
+
+To evaluate the independent contribution of the engineered player and historical features, a second experiment was performed excluding:
+
+```text
+winner_implied_prob_avg
+loser_implied_prob_avg
+implied_prob_diff_avg
+has_any_market_odds
+```
+
+Without market-odds information, the Decision Tree achieved 0.6492 accuracy on the chronological holdout. The most important features were:
+
+```text
+rank_diff                  0.6488
+points_diff                0.2262
+surface_win_rate_diff      0.0978
+```
+
+This demonstrates that the feature-engineering pipeline provides predictive information independently of betting-market probabilities, although market odds provide a substantial additional improvement.
+
+The comparison also provides an interpretable distinction between two sources of predictive information: the market's aggregated pre-match assessment and player-level historical/statistical features.
+
+## Model Outputs
+
+The Decision Tree training script produces a JSON file containing:
+
+* Best hyperparameters.
+* Cross-validation accuracy.
+* Chronological holdout accuracy.
+* Confusion matrix.
+* Final tree depth and number of leaves.
+* Top feature importances.
+* A textual representation of the tree.
+
+The current experiments are stored as:
+
+```text
+data/interim/decision_tree_metrics.json
+data/interim/decision_tree_no_odds.json
+```
+
+The first file corresponds to the model using all features, including market odds. The second corresponds to the experiment excluding market-odds features.
+
+The tree visualization is optional and requires `matplotlib`.
 
 ## Run locally
 
