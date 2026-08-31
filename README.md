@@ -6,7 +6,12 @@ This project aims to predict the outcomes of ATP tennis matches using historical
 
 The primary data source is the yearly Excel files from Tennis-Data, containing historical ATP match results and related match statistics.
 
-Additional player and match statistics are obtained from the [Jeff Sackmann Tennis ATP dataset](https://github.com/JeffSackmann/tennis_atp). These data are used to enrich the dataset with player characteristics and historical service and return statistics.
+Additional player and match statistics come from Jeff Sackmann's ATP dataset.
+The original upstream repository is currently unavailable, so the reproducible
+workflow uses the [June 2026 archival mirror](https://github.com/Aneeshers/tennis-sackmann-archive).
+The data remains attributed to Jeff Sackmann and licensed CC BY-NC-SA 4.0;
+commercial use is not permitted by that license. These data enrich the project
+with player characteristics and historical service and return statistics.
 
 Raw Tennis-Data files and the external Sackmann repository are local inputs and are not committed to Git.
 
@@ -21,8 +26,69 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Clone the repository and install the project dependencies:
 
 ```bash
-uv sync
+uv sync --all-groups
 ```
+
+`--all-groups` installs the notebook execution tools in addition to the runtime
+dependencies.
+
+## CatBoost: complete run from scratch
+
+Run these commands from the project root. Each command consumes the artifact
+created by the previous command.
+
+```bash
+# 1. Install runtime, test, and notebook dependencies.
+uv sync --all-groups
+
+# 2. Download Tennis-Data workbooks and create their manifest.
+uv run python scripts/data_downloader/download_data.py \
+  --start-year 2015 \
+  --end-year 2026
+
+# 3. Merge the yearly workbooks.
+uv run --directory scripts/data_downloader python merge_tennis_excel.py
+
+# 4. Normalize matches and remove post-match/leaking columns.
+uv run python scripts/data_cleaner/normalize_data.py
+
+# 5. Download the June 2026 Sackmann archival mirror.
+git clone --depth 1 \
+  https://github.com/Aneeshers/tennis-sackmann-archive.git \
+  external/tennis-sackmann-archive
+
+# 6. Add point-in-time biography, service, and return features.
+uv run python scripts/data_cleaner/enrich_with_sackmann.py \
+  --sackmann-dir external/tennis-sackmann-archive/atp
+
+# 7. Build the symmetric, leakage-safe model table.
+# CatBoost performs its own temporal model selection, so the unrelated
+# Random-Forest/RFECV diagnostic is skipped here.
+uv run python scripts/data_cleaner/build_features.py \
+  --input data/interim/tennis_matches_enriched.data \
+  --rare-threshold 50 \
+  --skip-model-analysis
+
+# 8. Run 24 parameter combinations across five chronological folds,
+# refit the winner, and evaluate the untouched newest 15% of dates.
+uv run python scripts/models/train_catboost.py
+
+# 9. Recreate and execute the complete analysis notebook.
+uv run python scripts/models/create_catboost_notebook.py --execute
+```
+
+The training step creates:
+
+```text
+data/interim/catboost_model.cbm
+data/interim/catboost_metrics.json
+```
+
+The notebook step creates the executed report
+`docs/catboost_training_analysis.ipynb`.
+
+If memory is constrained, add `--jobs 1` to `train_catboost.py`. This reduces
+parallel memory use but increases runtime.
 
 ## Data Pipeline
 
@@ -73,17 +139,20 @@ The `docs/classification.ipynb` notebook remains available for exploratory analy
 
 ### Enrich with Sackmann data
 
-Clone the external dataset, or place an equivalent local checkout containing `atp_players.csv` and the required `atp_matches_YYYY.csv` files:
+Clone the archival dataset, or provide an equivalent local directory containing
+`atp_players.csv` and the required `atp_matches_YYYY.csv` files:
 
 ```bash
-git clone --depth 1 https://github.com/JeffSackmann/tennis_atp.git external/tennis_atp
+git clone --depth 1 \
+  https://github.com/Aneeshers/tennis-sackmann-archive.git \
+  external/tennis-sackmann-archive
 ```
 
 Run the enrichment step:
 
 ```bash
 uv run python scripts/data_cleaner/enrich_with_sackmann.py \
-  --sackmann-dir external/tennis_atp
+  --sackmann-dir external/tennis-sackmann-archive/atp
 ```
 
 The script writes `data/interim/tennis_matches_enriched.data` and the name-resolution report `data/interim/sackmann_name_matching_review.csv`.
@@ -102,6 +171,17 @@ uv run python scripts/data_cleaner/build_features.py \
   --rfecv-min-features 15
 ```
 
+The Random Forest baseline and RFECV are optional diagnostics. For CatBoost,
+building the same feature artifacts without that separate and expensive model
+analysis is recommended:
+
+```bash
+uv run python scripts/data_cleaner/build_features.py \
+  --input data/interim/tennis_matches_enriched.data \
+  --rare-threshold 50 \
+  --skip-model-analysis
+```
+
 The command accepts `--input`, `--output-features`, and `--output-metadata` path overrides. The main tuning options are `--rare-threshold`, `--rfecv-step`, and `--rfecv-min-features`.
 
 The feature-building pipeline uses only information available before each match, in order to avoid data leakage. It creates:
@@ -116,7 +196,10 @@ The feature-building pipeline uses only information available before each match,
 
 Each real match is represented twice in the model data: once in the original orientation and once with the players swapped. The target column is `player_a_win`, which removes dependence on the arbitrary winner/loser orientation.
 
-For the current dataset, the feature-building pipeline produced 56,292 rows, corresponding to 28,146 real matches and their mirrored representations. RFECV reduced the encoded feature space from 270 features to 135 selected features, with a best RFECV cross-validation accuracy of 0.6809.
+For the current 2015–2026 run, the feature-building pipeline produced 56,450
+rows, corresponding to 28,225 real matches and their mirrored representations.
+The executed CatBoost workflow uses all 64 numeric and five categorical
+features; it does not reuse feature selection fitted for a different model.
 
 The resulting dataset is used as input for the machine learning models.
 
@@ -206,6 +289,117 @@ This demonstrates that the feature-engineering pipeline provides predictive info
 
 The comparison also provides an interpretable distinction between two sources of predictive information: the market's aggregated pre-match assessment and player-level historical/statistical features.
 
+### CatBoost
+
+CatBoost is available as a higher-capacity gradient-boosted tree model. It uses
+the categorical columns directly, without one-hot encoding, while preserving
+the same chronological holdout and date-based cross-validation strategy used
+by the Decision Tree.
+
+Train and tune the model with:
+
+```bash
+uv run python scripts/models/train_catboost.py \
+  --input data/interim/tennis_matches_features.data \
+  --metadata data/interim/tennis_matches_features_metadata.json
+```
+
+The default grid searches over iterations, tree depth, learning rate, and L2
+leaf regularization. Each range can be changed from the command line; for a
+quick smoke run, for example:
+
+```bash
+uv run python scripts/models/train_catboost.py \
+  --iterations 50 \
+  --depth 4 \
+  --learning-rate 0.1 \
+  --l2-leaf-reg 3 \
+  --cv-folds 2
+```
+
+The script writes `data/interim/catboost_metrics.json` and the reusable model
+artifact `data/interim/catboost_model.cbm`. The metrics include accuracy, ROC
+AUC, log loss, Brier score, confusion matrix, classification report, feature
+importance, and the leading cross-validation candidates.
+
+The completed 2015–2026 run selected:
+
+```text
+depth = 8
+iterations = 300
+learning_rate = 0.03
+l2_leaf_reg = 3.0
+```
+
+Its executed results are:
+
+| Evaluation                                      | Accuracy | ROC AUC | Log loss | Brier score |
+| ----------------------------------------------- | -------: | ------: | -------: | ----------: |
+| CatBoost temporal CV                            |   0.6838 |       — |        — |           — |
+| CatBoost chronological holdout                  |   0.6838 |  0.7528 |   0.5866 |      0.2016 |
+| CatBoost holdout, no market features¹           |   0.6609 |  0.7267 |   0.6077 |      0.2106 |
+| Normalized market baseline on holdout           |   0.6877 |  0.7509 |   0.5883 |      0.2023 |
+
+¹ The no-market result fixes the selected hyperparameters and removes the four
+market-related features; it is a diagnostic ablation, not a separately tuned
+model.
+
+CatBoost has slightly better ranking quality than the normalized market
+baseline (ROC AUC), but it does not beat that baseline on winner accuracy in
+this holdout. The no-market result confirms that rankings, form, surface,
+history, and player statistics contain independent predictive signal.
+
+### Executed CatBoost analysis notebook
+
+The notebook follows the supervised-learning sequence used in the course:
+dataset inspection, chronological train/test split, naive majority baseline,
+cross-validation and hyperparameter tuning, final training, confusion matrix,
+classification report, ROC/AUC, and feature importance.
+
+```text
+docs/catboost_training_analysis.ipynb
+```
+
+Recreate and execute it with:
+
+```bash
+uv run python scripts/models/create_catboost_notebook.py --execute
+```
+
+The full 120-fit grid search remains in `train_catboost.py`. To keep the
+notebook simple and suitable for **Run All**, it reads the selected parameters
+from `catboost_metrics.json` and trains the final CatBoost model once.
+
+### Use the trained CatBoost model
+
+Score any CSV containing the exact engineered feature schema recorded in
+`catboost_metrics.json`:
+
+```bash
+uv run python scripts/models/predict_catboost.py \
+  --input data/interim/tennis_matches_features.data \
+  --model data/interim/catboost_model.cbm \
+  --metrics data/interim/catboost_metrics.json \
+  --output data/interim/catboost_predictions.csv
+```
+
+The output adds:
+
+```text
+player_a_win_probability
+player_b_win_probability
+predicted_player_a_win
+predicted_winner_side
+predicted_winner_name
+```
+
+The example above demonstrates batch scoring on the historical engineered
+table. For a future match, the input must first be built from the same
+point-in-time feature definitions; player names alone are not enough. After
+symmetrization, legacy columns named `winner_*` and `loser_*` represent oriented
+player A and player B. `player_a_win` and the prediction columns use that
+orientation.
+
 ## Model Outputs
 
 The Decision Tree training script produces a JSON file containing:
@@ -228,6 +422,15 @@ data/interim/decision_tree_no_odds.json
 The first file corresponds to the model using all features, including market odds. The second corresponds to the experiment excluding market-odds features.
 
 The tree visualization is optional and requires `matplotlib`.
+
+CatBoost outputs are:
+
+```text
+data/interim/catboost_model.cbm
+data/interim/catboost_metrics.json
+data/interim/catboost_predictions.csv
+docs/catboost_training_analysis.ipynb
+```
 
 ## Run locally
 
