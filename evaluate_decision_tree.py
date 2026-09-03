@@ -334,10 +334,10 @@ def main() -> None:
     payload = {
         "model_source": model_source,
         "split_info": split_info,
-        "train_rows": int(len(X_train)),
-        "test_rows": int(len(X_test)),
-        "numeric_features_count": int(len(numeric_features)),
-        "categorical_features_count": int(len(categorical_features)),
+        "train_rows": len(X_train),
+        "test_rows": len(X_test),
+        "numeric_features_count": len(numeric_features),
+        "categorical_features_count": len(categorical_features),
         "metrics": metrics,
         "cross_validation": cv_summary,
     }
