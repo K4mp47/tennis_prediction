@@ -114,10 +114,15 @@ diversa della distribuzione, senza implicare causalita'.""",
         "because the classes are": "perche' le classi sono",
         "balanced.": "bilanciate.",
         "CatBoost obtains": "CatBoost ottiene",
+        "CatBoost's selection score is": "Il punteggio di selezione di CatBoost e'",
+        "and its holdout accuracy is": "e la sua accuratezza sull'holdout e'",
         "in cross-validation and": "in cross-validation e",
         "test accuracy**, so the result is stable on future": "di accuratezza sul test**, quindi il risultato e' stabile sulle",
         "matches.": "partite future.",
         "The model improves clearly over the naive baseline.": "Il modello migliora chiaramente rispetto alla baseline ingenua.",
+        "It ties the market baseline on accuracy, but the market remains slightly": "Pareggia la baseline di mercato sull'accuratezza, ma il mercato resta leggermente",
+        "better on ROC AUC, log loss and Brier score. This run therefore does not": "migliore per ROC AUC, log loss e Brier score. Questa esecuzione quindi non",
+        "demonstrate predictive advantage over the betting market.": "dimostra un vantaggio predittivo rispetto al mercato delle scommesse.",
         "Market-implied probabilities are the most important features. Therefore,": "Le probabilita' implicite di mercato sono le feature piu' importanti. Quindi",
         "part of the predictive power comes from information already contained in": "parte del potere predittivo deriva da informazioni gia' contenute nelle",
         "betting odds.": "quote delle scommesse.",
@@ -136,6 +141,11 @@ diversa della distribuzione, senza implicare causalita'.""",
 
     code_replacements = {
         "Dataset shape:": "Dimensioni del dataset:",
+        "Training run UTC:": "Esecuzione training UTC:",
+        "Training script SHA-256:": "SHA-256 dello script di training:",
+        "Input data SHA-256:": "SHA-256 dei dati di input:",
+        "Metadata SHA-256:": "SHA-256 dei metadati:",
+        "Provenance checks passed.": "Controlli di provenienza superati.",
         'rename("instances")': 'rename("istanze")',
         '"first date"': '"prima data"',
         '"last date"': '"ultima data"',
@@ -148,8 +158,12 @@ diversa della distribuzione, senza implicare causalita'.""",
         "Training completed.": "Addestramento completato.",
         '"Naive baseline accuracy"': '"Accuratezza baseline ingenua"',
         '"Training accuracy"': '"Accuratezza training"',
-        '"Test accuracy"': '"Accuratezza test"',
-        '"Test ROC AUC"': '"ROC AUC test"',
+        "Training accuracy:": "Accuratezza training:",
+        "Cross-validation {cv_metric}:": "Punteggio di cross-validation {cv_metric}:",
+        '"Naive baseline"': '"Baseline ingenua"',
+        '"CatBoost holdout"': '"Holdout CatBoost"',
+        '"Market baseline"': '"Baseline di mercato"',
+        '"Accuracy"': '"Accuratezza"',
         'display_labels=["Player B wins", "Player A wins"]': 'display_labels=["Vince il giocatore B", "Vince il giocatore A"]',
         "CatBoost confusion matrix - test set": "Matrice di confusione CatBoost - test set",
         'target_names=["Player B wins", "Player A wins"]': 'target_names=["Vince il giocatore B", "Vince il giocatore A"]',
@@ -250,7 +264,9 @@ from sklearn.metrics import (
     ConfusionMatrixDisplay,
     RocCurveDisplay,
     accuracy_score,
+    brier_score_loss,
     classification_report,
+    log_loss,
     roc_auc_score,
 )
 
@@ -262,6 +278,7 @@ MODELS_DIR = PROJECT_ROOT / "scripts" / "models"
 sys.path.insert(0, str(MODELS_DIR))
 
 from train_catboost import (  # noqa: E402
+    file_sha256,
     prepare_catboost_features,
     symmetrize_pair_probabilities,
 )
@@ -293,6 +310,24 @@ columns_to_show = [
 ]
 
 print("Dataset shape:", dataset.shape)
+print("Training run UTC:", training_metrics["created_at_utc"])
+print(
+    "Training script SHA-256:",
+    training_metrics.get("training_script_sha256", "not recorded"),
+)
+print("Input data SHA-256:", training_metrics.get("input_sha256", "not recorded"))
+print("Metadata SHA-256:", training_metrics.get("metadata_sha256", "not recorded"))
+
+provenance_files = {
+    "training_script_sha256": MODELS_DIR / "train_catboost.py",
+    "input_sha256": FEATURES_PATH,
+    "metadata_sha256": METADATA_PATH,
+}
+for metric_name, path in provenance_files.items():
+    assert training_metrics.get(metric_name) == file_sha256(path), (
+        f"Stale training artifact: {metric_name} does not match {path}."
+    )
+print("Provenance checks passed.")
 display(dataset[columns_to_show].head())
 display(dataset["player_a_win"].value_counts().sort_index().rename("instances").to_frame())"""
         ),
@@ -417,22 +452,26 @@ test_prediction = (test_probability >= 0.5).astype(int)
 train_accuracy = accuracy_score(y_train, train_prediction)
 test_accuracy = accuracy_score(y_test, test_prediction)
 test_auc = roc_auc_score(y_test, test_probability)
+test_log_loss = log_loss(y_test, test_probability)
+test_brier_score = brier_score_loss(y_test, test_probability)
 cv_metric = training_metrics.get("selection_metric", "accuracy")
 cv_score = training_metrics.get("best_cv_accuracy")
 if cv_score is None:
     cv_score = training_metrics["best_cv_score"]
 
-results = pd.Series(
+market_metrics = training_metrics["market_baseline_holdout"]
+results = pd.DataFrame(
     {
-        "Naive baseline accuracy": baseline_accuracy,
-        "Training accuracy": train_accuracy,
-        f"Cross-validation {cv_metric}": cv_score,
-        "Test accuracy": test_accuracy,
-        "Test ROC AUC": test_auc,
+        "Accuracy": [baseline_accuracy, test_accuracy, market_metrics["accuracy"]],
+        "ROC AUC": [np.nan, test_auc, market_metrics["roc_auc"]],
+        "Log loss": [np.nan, test_log_loss, market_metrics["log_loss"]],
+        "Brier score": [np.nan, test_brier_score, market_metrics["brier_score"]],
     },
-    name="score",
+    index=["Naive baseline", "CatBoost holdout", "Market baseline"],
 )
-display(results.to_frame())"""
+display(results)
+print(f"Training accuracy: {train_accuracy:.4f}")
+print(f"Cross-validation {cv_metric}: {cv_score:.4f}")"""
         ),
         new_markdown_cell("### Confusion matrix"),
         new_code_cell(
@@ -680,10 +719,12 @@ print(
 
 - The naive baseline obtains about **50% accuracy** because the classes are
   balanced.
-- CatBoost obtains **{cv_result}** in cross-validation and
-  **{holdout_accuracy:.4f} test accuracy**, so the result is stable on future
-  matches.
+- CatBoost's selection score is **{cv_result}** and its holdout accuracy is
+  **{holdout_accuracy:.4f}**.
 - The model improves clearly over the naive baseline.
+- It ties the market baseline on accuracy, but the market remains slightly
+  better on ROC AUC, log loss and Brier score. This run therefore does not
+  demonstrate predictive advantage over the betting market.
 - Market-implied probabilities are the most important features. Therefore,
   part of the predictive power comes from information already contained in
   betting odds.
@@ -698,6 +739,9 @@ features or CatBoost parameters must be selected using the training
 cross-validation folds, not this test result."""
         ),
     ]
+
+    for index, cell in enumerate(cells):
+        cell.id = f"catboost-{index:02d}"
 
     notebook = new_notebook(
         cells=cells,
@@ -730,6 +774,9 @@ def main() -> None:
             resources={"metadata": {"path": str(project_root)}},
         )
         client.execute()
+
+    for cell in notebook.cells:
+        cell.metadata.pop("execution", None)
 
     output = args.output or project_root / "docs" / (
         "catboost_training_analysis_it.ipynb"
