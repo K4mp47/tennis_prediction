@@ -69,12 +69,15 @@ uv run python scripts/data_cleaner/build_features.py \
   --rare-threshold 50 \
   --skip-model-analysis
 
-# 8. Run 24 parameter combinations across five chronological folds,
-# refit the winner, and evaluate the untouched newest 15% of dates.
+# 8. Sample 12 parameter combinations across five chronological folds,
+# select tree count with early stopping, and evaluate the newest 15% of dates.
 uv run python scripts/models/train_catboost.py
 
 # 9. Recreate and execute the complete analysis notebook.
 uv run python scripts/models/create_catboost_notebook.py --execute
+
+# Optional Italian-language copy.
+uv run python scripts/models/create_catboost_notebook.py --language it --execute
 ```
 
 The training step creates:
@@ -84,8 +87,8 @@ data/interim/catboost_model.cbm
 data/interim/catboost_metrics.json
 ```
 
-The notebook step creates the executed report
-`docs/catboost_training_analysis.ipynb`.
+The notebook step creates `docs/catboost_training_analysis.ipynb`; the Italian
+command creates `docs/catboost_training_analysis_it.ipynb`.
 
 If memory is constrained, add `--jobs 1` to `train_catboost.py`. This reduces
 parallel memory use but increases runtime.
