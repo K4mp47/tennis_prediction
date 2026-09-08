@@ -57,21 +57,15 @@ sempre la classe maggioritaria.
 
 Poiche' il dataset simmetrico e' bilanciato, l'accuratezza attesa della baseline
 e' circa il 50%.""",
-        "## 4. Ricerca degli iperparametri",
-        """I parametri sono stati scelti con `RandomizedSearchCV`. Dodici
-combinazioni campionate sono state valutate con cinque fold cronologici di
-cross-validation. Il test set finale non e' stato usato durante la selezione.
-L'ultimo fold CV ha poi scelto il numero di alberi con early stopping.
-
-La griglia controlla:
-
-- `iterations`: numero di alberi nell'ensemble;
-- `depth`: profondita' massima di ogni albero;
-- `learning_rate`: contributo di ogni nuovo albero;
-- `l2_leaf_reg`: regolarizzazione per limitare l'overfitting;
-- `random_strength`: casualita' applicata alla scelta delle divisioni;
-- `bagging_temperature`: intensita' del bootstrap bayesiano.""",
-        "## 5. Addestramento del modello finale",
+        "## 4. Parametri fissi del modello",
+        """Il trainer usa parametri fissi: 300 alberi, profondita' 8,
+learning rate 0.03, regolarizzazione L2 pari a 3 e seed 42.
+Questa esecuzione non usa cross-validation, ricerca dei parametri o early stopping.""",
+        "## 5. Caricamento del modello addestrato",
+        """Eseguire `python scripts/models/train_catboost.py` dalla radice del
+progetto prima del notebook. Il trainer esegue `model.fit(X_train, y_train)`
+e salva il modello. Il notebook valuta il modello salvato e verifica i risultati
+rispetto alle metriche di training.""",
         "## 6. Valutazione del classificatore",
         "### Matrice di confusione",
         "### Precisione, richiamo e F1-score",
@@ -83,7 +77,8 @@ L'importanza aiuta a interpretare il modello, ma non dimostra un rapporto
 causale.""",
         "## 8. Analisi delle partite piu' facili e piu' difficili",
         """Le righe sono abbinate tramite `match_id_internal`, quindi ogni partita
-reale viene contata una sola volta. La confidenza assegnata al vincitore reale
+reale viene contata una sola volta solo per questa diagnostica; le metriche
+principali valutano le predizioni originali per riga, come il trainer. La confidenza assegnata al vincitore reale
 e' mediata tra i due orientamenti. Le previsioni piu' corrette assegnano la
 probabilita' maggiore al vincitore reale; quelle piu' errate la minore.""",
         "### Previsioni corrette con maggiore confidenza",
@@ -109,6 +104,8 @@ diversa della distribuzione, senza implicare causalita'.""",
     conclusion = markdown_cells[-1].source
     conclusion_replacements = {
         "## Conclusion": "## Conclusioni",
+        "holdout accuracy with fixed parameters.": "di accuratezza sull'holdout con parametri fissi.",
+        "This is a rerun on an existing holdout, not a new independent test. Any future change to the": "Questa esecuzione riutilizza un holdout esistente, non un nuovo test indipendente. Ogni modifica futura a",
         "The naive baseline obtains about": "La baseline ingenua ottiene circa il",
         "% accuracy**": "% di accuratezza**",
         "because the classes are": "perche' le classi sono",
@@ -131,7 +128,6 @@ diversa della distribuzione, senza implicare causalita'.""",
         "missing-value anomaly separating correct and wrong predictions.": "altrettanto grande nei valori mancanti tra previsioni corrette ed errate.",
         "The difference between training and test accuracy should be monitored: a": "La differenza tra accuratezza di training e test va monitorata: un punteggio",
         "much larger training score would indicate over-fitting.": "di training molto maggiore indicherebbe overfitting.",
-        "The final test set is used only once for evaluation. Any future change to the": "Il test set finale e' usato una sola volta per la valutazione. Ogni modifica futura a",
         "features or CatBoost parameters must be selected using the training": "feature o parametri CatBoost deve essere scelta usando i fold di",
         "cross-validation folds, not this test result.": "cross-validation del training, non questo risultato di test.",
     }
@@ -141,6 +137,8 @@ diversa della distribuzione, senza implicare causalita'.""",
 
     code_replacements = {
         "Dataset shape:": "Dimensioni del dataset:",
+        "Saved model metrics verified.": "Metriche del modello salvato verificate.",
+        "Market baseline coverage:": "Copertura della baseline di mercato:",
         "Training run UTC:": "Esecuzione training UTC:",
         "Training script SHA-256:": "SHA-256 dello script di training:",
         "Input data SHA-256:": "SHA-256 dei dati di input:",
@@ -211,14 +209,6 @@ def parse_args() -> argparse.Namespace:
 def build_notebook(
     metrics: dict[str, object], language: str = "en"
 ) -> nbformat.NotebookNode:
-    best_cv_accuracy = metrics.get("best_cv_accuracy")
-    if best_cv_accuracy is None:
-        cv_result = (
-            f"{metrics.get('selection_metric', 'validation score')} "
-            f"{metrics['best_cv_score']:.4f}"
-        )
-    else:
-        cv_result = f"accuracy {best_cv_accuracy:.4f}"
     holdout_accuracy = metrics["holdout_accuracy"]
 
     cells = [
@@ -257,7 +247,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
+from catboost import CatBoostClassifier, Pool
 from IPython.display import display
 from sklearn.dummy import DummyClassifier
 from sklearn.metrics import (
@@ -277,16 +267,12 @@ if not (PROJECT_ROOT / "pyproject.toml").exists():
 MODELS_DIR = PROJECT_ROOT / "scripts" / "models"
 sys.path.insert(0, str(MODELS_DIR))
 
-from train_catboost import (  # noqa: E402
-    file_sha256,
-    prepare_catboost_features,
-    symmetrize_pair_probabilities,
-)
-from training_utils import chronological_holdout_split  # noqa: E402
+from train_catboost import chronological_split, prepare_catboost_features  # noqa: E402
 
 FEATURES_PATH = PROJECT_ROOT / "data/interim/tennis_matches_features.data"
 METADATA_PATH = PROJECT_ROOT / "data/interim/tennis_matches_features_metadata.json"
 METRICS_PATH = PROJECT_ROOT / "data/interim/catboost_metrics.json"
+MODEL_PATH = PROJECT_ROOT / "data/interim/catboost_model.cbm"
 
 plt.style.use("seaborn-v0_8-whitegrid")"""
         ),
@@ -310,24 +296,6 @@ columns_to_show = [
 ]
 
 print("Dataset shape:", dataset.shape)
-print("Training run UTC:", training_metrics["created_at_utc"])
-print(
-    "Training script SHA-256:",
-    training_metrics.get("training_script_sha256", "not recorded"),
-)
-print("Input data SHA-256:", training_metrics.get("input_sha256", "not recorded"))
-print("Metadata SHA-256:", training_metrics.get("metadata_sha256", "not recorded"))
-
-provenance_files = {
-    "training_script_sha256": MODELS_DIR / "train_catboost.py",
-    "input_sha256": FEATURES_PATH,
-    "metadata_sha256": METADATA_PATH,
-}
-for metric_name, path in provenance_files.items():
-    assert training_metrics.get(metric_name) == file_sha256(path), (
-        f"Stale training artifact: {metric_name} does not match {path}."
-    )
-print("Provenance checks passed.")
 display(dataset[columns_to_show].head())
 display(dataset["player_a_win"].value_counts().sort_index().rename("instances").to_frame())"""
         ),
@@ -360,7 +328,9 @@ X = prepare_catboost_features(
 )
 y = dataset["player_a_win"].astype(int)
 
-train_index, test_index = chronological_holdout_split(dataset["date"], 0.15)
+train_mask, test_mask = chronological_split(dataset)
+train_index = np.flatnonzero(train_mask)
+test_index = np.flatnonzero(test_mask)
 X_train, X_test = X.iloc[train_index], X.iloc[test_index]
 y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
@@ -395,58 +365,28 @@ baseline_accuracy = accuracy_score(y_test, baseline.predict(X_test))
 
 print(f"Naive baseline accuracy: {baseline_accuracy:.4f}")"""
         ),
-        new_markdown_cell("## 4. Hyper-parameter tuning"),
+        new_markdown_cell("## 4. Fixed model parameters"),
         new_markdown_cell(
-        """The parameters were selected with `RandomizedSearchCV`. Twelve sampled
-combinations were evaluated using five chronological cross-validation folds.
-The final test set was not used during this selection. The last CV fold then
-selected the number of trees with early stopping.
-
-The grid controls:
-
-- `iterations`: number of trees in the ensemble;
-- `depth`: maximum depth of every tree;
-- `learning_rate`: contribution of each new tree;
-- `l2_leaf_reg`: regularization used to limit over-fitting;
-- `random_strength`: randomness applied when choosing tree splits;
-- `bagging_temperature`: intensity of Bayesian bootstrap sampling."""
+            """The current trainer uses fixed parameters: 300 trees, depth 8,
+learning rate 0.03 and L2 leaf regularization 3, with random seed 42.
+This run performs no cross-validation, parameter search or early stopping."""
         ),
         new_code_cell(
-            """print("Parameter grid:")
-display(pd.Series(training_metrics["parameter_grid"], name="tested values").to_frame())
-
-cv_metric = training_metrics.get("selection_metric", "accuracy")
-cv_score = training_metrics.get("best_cv_accuracy")
-if cv_score is None:
-    cv_score = training_metrics["best_cv_score"]
-print(f"Best cross-validation {cv_metric}: {cv_score:.4f}")
-print("Best parameters:", training_metrics["best_params"])"""
+            """model = CatBoostClassifier()
+model.load_model(str(MODEL_PATH))
+display(pd.Series(model.get_params(), name="parameters").to_frame())"""
         ),
-        new_markdown_cell("## 5. Train the final model"),
-        new_code_cell(
-            """model = CatBoostClassifier(
-    **training_metrics["best_params"],
-    loss_function="Logloss",
-    eval_metric="Logloss",
-    cat_features=categorical_features,
-    random_seed=42,
-    allow_writing_files=False,
-    verbose=False,
-    thread_count=1,
-)
-
-model.fit(X_train, y_train)
-print("Training completed.")"""
+        new_markdown_cell("## 5. Load the trained model"),
+        new_markdown_cell(
+            """Run `python scripts/models/train_catboost.py` from the project root
+before executing this notebook. The trainer calls `model.fit(X_train, y_train)`
+and saves the model. This notebook evaluates that saved model so its results
+can be checked directly against the training metrics."""
         ),
         new_markdown_cell("## 6. Evaluate the classifier"),
         new_code_cell(
             """train_prediction = model.predict(X_train).astype(int).ravel()
-raw_test_probability = model.predict_proba(X_test)[:, 1]
-test_probability, test_actual_winner_probability = symmetrize_pair_probabilities(
-    dataset.iloc[test_index]["match_id_internal"],
-    y_test,
-    raw_test_probability,
-)
+test_probability = model.predict_proba(X_test)[:, 1]
 test_prediction = (test_probability >= 0.5).astype(int)
 
 train_accuracy = accuracy_score(y_train, train_prediction)
@@ -454,12 +394,19 @@ test_accuracy = accuracy_score(y_test, test_prediction)
 test_auc = roc_auc_score(y_test, test_probability)
 test_log_loss = log_loss(y_test, test_probability)
 test_brier_score = brier_score_loss(y_test, test_probability)
-cv_metric = training_metrics.get("selection_metric", "accuracy")
-cv_score = training_metrics.get("best_cv_accuracy")
-if cv_score is None:
-    cv_score = training_metrics["best_cv_score"]
-
-market_metrics = training_metrics["market_baseline_holdout"]
+assert np.isclose(test_accuracy, training_metrics["holdout_accuracy"])
+assert np.isclose(test_auc, training_metrics["holdout_roc_auc"])
+market_probability = dataset.iloc[test_index]["winner_market_prob_normalized"]
+market_valid = market_probability.notna()
+market_y = y_test.loc[market_valid]
+market_probability = market_probability.loc[market_valid]
+market_metrics = {
+    "accuracy": accuracy_score(market_y, market_probability >= 0.5),
+    "roc_auc": roc_auc_score(market_y, market_probability),
+    "log_loss": log_loss(market_y, market_probability),
+    "brier_score": brier_score_loss(market_y, market_probability),
+}
+print(f"Market baseline coverage: {market_valid.mean():.1%}")
 results = pd.DataFrame(
     {
         "Accuracy": [baseline_accuracy, test_accuracy, market_metrics["accuracy"]],
@@ -471,7 +418,7 @@ results = pd.DataFrame(
 )
 display(results)
 print(f"Training accuracy: {train_accuracy:.4f}")
-print(f"Cross-validation {cv_metric}: {cv_score:.4f}")"""
+print("Saved model metrics verified.")"""
         ),
         new_markdown_cell("### Confusion matrix"),
         new_code_cell(
@@ -518,13 +465,17 @@ does not prove that a feature causes the prediction."""
         new_code_cell(
             """feature_importance = (
     pd.Series(
-        np.asarray(model.feature_importances_, dtype=float),
+        model.get_feature_importance(
+            Pool(X_train, y_train, cat_features=categorical_features)
+        ),
         index=feature_names,
         name="importance",
     )
     .sort_values(ascending=False)
 )
 
+assert np.isfinite(feature_importance).all()
+assert feature_importance.sum() > 0
 display(feature_importance.head(10).to_frame())
 
 ax = feature_importance.head(10).sort_values().plot(
@@ -541,13 +492,19 @@ plt.show()"""
         new_markdown_cell("## 8. Inspect the easiest and hardest matches"),
         new_markdown_cell(
             """Rows are paired by `match_id_internal`, so every real match is
-counted once. Confidence in the real winner is averaged across the two player
+counted once for this diagnostic only; the main metrics above evaluate raw
+row predictions, as in the trainer. Confidence in the real winner is averaged across the two player
 orientations. The most correct matches have the highest probability assigned
 to the actual winner; the most wrong matches have the lowest."""
         ),
         new_code_cell(
             """holdout = dataset.iloc[test_index].copy()
-holdout["actual_winner_probability"] = test_actual_winner_probability
+holdout["actual_winner_probability"] = np.where(
+    y_test.eq(1), test_probability, 1 - test_probability
+)
+holdout["actual_winner_probability"] = holdout.groupby("match_id_internal")[
+    "actual_winner_probability"
+].transform("mean")
 
 pair_sizes = holdout.groupby("match_id_internal").size()
 assert pair_sizes.eq(2).all(), "Each holdout match must have two orientations."
@@ -719,12 +676,8 @@ print(
 
 - The naive baseline obtains about **50% accuracy** because the classes are
   balanced.
-- CatBoost's selection score is **{cv_result}** and its holdout accuracy is
-  **{holdout_accuracy:.4f}**.
+- CatBoost obtains **{holdout_accuracy:.4f}** holdout accuracy with fixed parameters.
 - The model improves clearly over the naive baseline.
-- It ties the market baseline on accuracy, but the market remains slightly
-  better on ROC AUC, log loss and Brier score. This run therefore does not
-  demonstrate predictive advantage over the betting market.
 - Market-implied probabilities are the most important features. Therefore,
   part of the predictive power comes from information already contained in
   betting odds.
@@ -734,7 +687,7 @@ print(
 - The difference between training and test accuracy should be monitored: a
   much larger training score would indicate over-fitting.
 
-The final test set is used only once for evaluation. Any future change to the
+This is a rerun on an existing holdout, not a new independent test. Any future change to the
 features or CatBoost parameters must be selected using the training
 cross-validation folds, not this test result."""
         ),

@@ -205,6 +205,38 @@ Il secondo contiene soltanto le informazioni necessarie per interpretare e riuti
 - Accuracy sul test;
 - ROC AUC sul test.
 
+## Risultati eseguiti — 2026-09-08
+
+La tabella locale contiene 30.952 righe (15.476 partite), con 72 feature
+numeriche e cinque categoriche. Il training usa 26.472 righe dal 2020-01-06 al
+2025-08-07; il test usa 4.480 righe dal 2025-08-08 al 2026-07-12.
+
+| Valutazione | Accuracy | ROC AUC | Log loss | Brier score |
+| --- | ---: | ---: | ---: | ---: |
+| CatBoost | 0.6946 | 0.7559 | 0.5834 | 0.2003 |
+| Baseline di mercato normalizzata | 0.6915 | 0.7578 | 0.5818 | 0.1996 |
+| Baseline maggioritaria | 0.5000 | — | — | — |
+
+L'accuracy di training è 0.7062. Questa esecuzione usa parametri fissi, senza
+ricerca o cross-validation. Riutilizza un holdout esistente, non un nuovo test
+indipendente. Il piccolo miglioramento di accuracy rispetto al mercato non
+dimostra un vantaggio affidabile; il mercato è migliore nelle altre tre metriche.
+
+Entrambi i notebook eseguiti caricano il modello salvato e verificano che
+accuracy e ROC AUC coincidano con il JSON di training. Le metriche aggiuntive
+sono calcolate nei notebook. Le metriche principali usano le predizioni originali
+per entrambi gli orientamenti; la diagnostica separata per partita media i due
+orientamenti e ottiene accuracy 0.6915.
+
+```bash
+uv run python scripts/models/create_catboost_notebook.py --execute
+uv run python scripts/models/create_catboost_notebook.py --language it --execute
+```
+
+Modello e dati restano locali in `data/interim/`; gli output eseguiti sono nel
+[notebook inglese](catboost_training_analysis.ipynb) e nel
+[notebook italiano](catboost_training_analysis_it.ipynb).
+
 ## Esecuzione
 
 Dopo aver costruito il dataset delle feature:

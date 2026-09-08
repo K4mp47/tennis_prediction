@@ -62,15 +62,14 @@ uv run python scripts/data_cleaner/enrich_with_sackmann.py \
   --sackmann-dir external/tennis-sackmann-archive/atp
 
 # 7. Build the symmetric, leakage-safe model table.
-# CatBoost performs its own temporal model selection, so the unrelated
+# CatBoost uses fixed parameters, so the unrelated
 # Random-Forest/RFECV diagnostic is skipped here.
 uv run python scripts/data_cleaner/build_features.py \
   --input data/interim/tennis_matches_enriched.data \
   --rare-threshold 50 \
   --skip-model-analysis
 
-# 8. Sample 12 parameter combinations across five chronological folds,
-# select tree count with early stopping, and evaluate the newest 15% of dates.
+# 8. Train the fixed-parameter model and evaluate the newest 15% of dates.
 uv run python scripts/models/train_catboost.py
 
 # 9. Recreate and execute the complete analysis notebook.
@@ -90,8 +89,8 @@ data/interim/catboost_metrics.json
 The notebook step creates `docs/catboost_training_analysis.ipynb`; the Italian
 command creates `docs/catboost_training_analysis_it.ipynb`.
 
-If memory is constrained, add `--jobs 1` to `train_catboost.py`. This reduces
-parallel memory use but increases runtime.
+The trainer uses 300 trees, depth 8, learning rate 0.03 and L2 regularization 3.
+It does not run a parameter search or cross-validation.
 
 ## Data Pipeline
 
@@ -199,9 +198,10 @@ The feature-building pipeline uses only information available before each match,
 
 Each real match is represented twice in the model data: once in the original orientation and once with the players swapped. The target column is `player_a_win`, which removes dependence on the arbitrary winner/loser orientation.
 
-For the current 2015–2026 run, the feature-building pipeline produced 56,450
-rows, corresponding to 28,225 real matches and their mirrored representations.
-The executed CatBoost workflow uses all 64 numeric and five categorical
+For the CatBoost run on 2026-09-08, the available feature table contains 30,952
+rows, corresponding to 15,476 real matches from 2020-01-06 to 2026-07-12
+and their mirrored representations. The executed CatBoost workflow uses all
+72 numeric and five categorical
 features; it does not reuse feature selection fitted for a different model.
 
 The resulting dataset is used as input for the machine learning models.
@@ -294,84 +294,71 @@ The comparison also provides an interpretable distinction between two sources of
 
 ### CatBoost
 
-CatBoost is available as a higher-capacity gradient-boosted tree model. It uses
-the categorical columns directly, without one-hot encoding, while preserving
-the same chronological holdout and date-based cross-validation strategy used
-by the Decision Tree.
-
-Train and tune the model with:
+CatBoost uses categorical columns directly, without one-hot encoding. The
+current trainer fits one model with fixed parameters and reserves the newest
+15% of unique dates for evaluation. Both orientations of each match remain
+in the same partition. This run has no parameter search or cross-validation.
 
 ```bash
-uv run python scripts/models/train_catboost.py \
-  --input data/interim/tennis_matches_features.data \
-  --metadata data/interim/tennis_matches_features_metadata.json
+uv run python scripts/models/train_catboost.py
 ```
 
-The default grid searches over iterations, tree depth, learning rate, and L2
-leaf regularization. Each range can be changed from the command line; for a
-quick smoke run, for example:
-
-```bash
-uv run python scripts/models/train_catboost.py \
-  --iterations 50 \
-  --depth 4 \
-  --learning-rate 0.1 \
-  --l2-leaf-reg 3 \
-  --cv-folds 2
-```
-
-The script writes `data/interim/catboost_metrics.json` and the reusable model
-artifact `data/interim/catboost_model.cbm`. The metrics include accuracy, ROC
-AUC, log loss, Brier score, confusion matrix, classification report, feature
-importance, and the leading cross-validation candidates.
-
-The completed 2015–2026 run selected:
+The fixed parameters are:
 
 ```text
 depth = 8
 iterations = 300
 learning_rate = 0.03
-l2_leaf_reg = 3.0
+l2_leaf_reg = 3
+random_seed = 42
 ```
 
-Its executed results are:
+The completed run on **2026-09-08** used 72 numeric and five categorical features:
 
-| Evaluation                                      | Accuracy | ROC AUC | Log loss | Brier score |
-| ----------------------------------------------- | -------: | ------: | -------: | ----------: |
-| CatBoost temporal CV                            |   0.6838 |       — |        — |           — |
-| CatBoost chronological holdout                  |   0.6838 |  0.7528 |   0.5866 |      0.2016 |
-| CatBoost holdout, no market features¹           |   0.6609 |  0.7267 |   0.6077 |      0.2106 |
-| Normalized market baseline on holdout           |   0.6877 |  0.7509 |   0.5883 |      0.2023 |
+| Partition | Rows | First date | Last date |
+| --- | ---: | --- | --- |
+| Training | 26,472 | 2020-01-06 | 2025-08-07 |
+| Holdout | 4,480 | 2025-08-08 | 2026-07-12 |
 
-¹ The no-market result fixes the selected hyperparameters and removes the four
-market-related features; it is a diagnostic ablation, not a separately tuned
-model.
+| Evaluation | Accuracy | ROC AUC | Log loss | Brier score |
+| --- | ---: | ---: | ---: | ---: |
+| Naive majority baseline | 0.5000 | — | — | — |
+| CatBoost chronological holdout | 0.6946 | 0.7559 | 0.5834 | 0.2003 |
+| Normalized market baseline | 0.6915 | 0.7578 | 0.5818 | 0.1996 |
 
-CatBoost has slightly better ranking quality than the normalized market
-baseline (ROC AUC), but it does not beat that baseline on winner accuracy in
-this holdout. The no-market result confirms that rankings, form, surface,
-history, and player statistics contain independent predictive signal.
+Training accuracy was 0.7062. Market probabilities are available for all holdout
+rows. CatBoost has slightly higher accuracy in this run, while the market has
+better ROC AUC, log loss and Brier score. This small accuracy difference does
+not establish a reliable advantage over the market. These are raw row-level
+predictions; the notebooks separately average the two orientations for
+match-level error analysis (accuracy 0.6915).
 
-### Executed CatBoost analysis notebook
+The trainer saves `data/interim/catboost_model.cbm` and
+`data/interim/catboost_metrics.json`. The JSON contains the algorithm, feature
+schema, holdout accuracy and ROC AUC. The notebooks calculate the additional
+metrics above from the saved model. Model and data artifacts remain local,
+as configured by `.gitignore`; executed notebook outputs are committed.
 
-The notebook follows the supervised-learning sequence used in the course:
-dataset inspection, chronological train/test split, naive majority baseline,
-cross-validation and hyperparameter tuning, final training, confusion matrix,
-classification report, ROC/AUC, and feature importance.
+This rerun reuses an existing holdout rather than a fresh independent test.
+Older Decision Tree experiments above used a different dataset and are not a
+controlled comparison with this run.
 
-```text
-docs/catboost_training_analysis.ipynb
-```
+### Executed CatBoost analysis notebooks
 
-Recreate and execute it with:
+The English and Italian notebooks inspect the dataset, reproduce the trainer's
+chronological split, load the saved model, verify its accuracy and ROC AUC
+against the metrics JSON, and show baselines, confusion matrix, classification
+report, ROC curve, feature importance and match-level error diagnostics.
 
 ```bash
 uv run python scripts/models/create_catboost_notebook.py --execute
+uv run python scripts/models/create_catboost_notebook.py --language it --execute
 ```
 
-The full 120-fit grid search remains in `train_catboost.py`. To keep the
-notebook simple and suitable for **Run All**, it reads the selected parameters
-from `catboost_metrics.json` and trains the final CatBoost model once.
+They create `docs/catboost_training_analysis.ipynb` and
+`docs/catboost_training_analysis_it.ipynb`. Run the trainer first; **Run All**
+evaluates the saved model without repeating training. The separate
+`docs/classification.ipynb` remains the exploratory analysis notebook.
 
 ### Use the trained CatBoost model
 

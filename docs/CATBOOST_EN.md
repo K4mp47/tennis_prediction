@@ -203,6 +203,37 @@ The second contains only the information needed to interpret and reuse it:
 - test Accuracy;
 - test ROC AUC.
 
+## Executed results — 2026-09-08
+
+The local feature table contains 30,952 rows (15,476 matches), with 72 numeric
+and five categorical features. Training uses 26,472 rows dated 2020-01-06 to
+2025-08-07; testing uses 4,480 rows dated 2025-08-08 to 2026-07-12.
+
+| Evaluation | Accuracy | ROC AUC | Log loss | Brier score |
+| --- | ---: | ---: | ---: | ---: |
+| CatBoost | 0.6946 | 0.7559 | 0.5834 | 0.2003 |
+| Normalized market baseline | 0.6915 | 0.7578 | 0.5818 | 0.1996 |
+| Majority baseline | 0.5000 | — | — | — |
+
+Training accuracy is 0.7062. This run uses fixed parameters, with no tuning or
+cross-validation. It reuses an existing holdout, not a fresh independent test.
+The small accuracy improvement over the market does not establish a reliable
+advantage; the market performs better on the other three metrics.
+
+Both executed notebooks load the saved model and assert that accuracy and ROC
+AUC match the training JSON. Additional metrics are computed in the notebooks.
+Main metrics use raw predictions for both orientations; the separate match-level
+diagnostic averages orientations and obtains 0.6915 accuracy.
+
+```bash
+uv run python scripts/models/create_catboost_notebook.py --execute
+uv run python scripts/models/create_catboost_notebook.py --language it --execute
+```
+
+Model/data artifacts stay local under `data/interim/`; executed outputs are in
+[the English notebook](catboost_training_analysis.ipynb) and
+[the Italian notebook](catboost_training_analysis_it.ipynb).
+
 ## Running the model
 
 After the feature dataset has been generated:
