@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "catboost>=1.2.10",
     "openpyxl>=3.1.5",
     "pandas>=3.0.3",
     "scikit-learn>=1.9.0",
@@ -24,6 +25,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "ipykernel>=7.3.0",
+    "nbclient>=0.11.0",
+    "nbformat>=5.11.1",
     "openpyxl>=3.1.5",
     "pytest>=9.1.1",
     "requests>=2.34.2",
