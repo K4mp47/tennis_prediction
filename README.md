@@ -15,6 +15,7 @@ with player characteristics and historical service and return statistics.
 
 Raw Tennis-Data files and the external Sackmann repository are local inputs and are not committed to Git.
 
+Enrichment data comes from [Jeff Sackmann's `tennis_atp` repository](https://github.com/JeffSackmann/tennis_atp) (player biographical data and match-level serve/return statistics). Like the raw Tennis-Data files, this data is local-only and not committed to Git — see [Download the enrichment data](#download-the-enrichment-data) below.
 ## Installation
 
 To run the project locally, Python 3.12 or newer and `uv` are required.
@@ -131,6 +132,7 @@ uv run --directory scripts/data_downloader python merge_tennis_excel.py
 
 Normalize the merged data before adding historical features:
 
+Reads the Tennis-Data raw file, removes incomplete/retired matches and invalid values, and normalizes column names and categorical values:
 ```bash
 uv run python scripts/data_cleaner/normalize_data.py
 ```
@@ -144,14 +146,17 @@ The `docs/classification.ipynb` notebook remains available for exploratory analy
 Clone the archival dataset, or provide an equivalent local directory containing
 `atp_players.csv` and the required `atp_matches_YYYY.csv` files:
 
+Adds player biographical data (height, dominant hand, age) and pre-match serve/return statistics (ace rate, break points saved, etc.), matched to Tennis-Data players by name. See [Download the enrichment data](#download-the-enrichment-data) for how to obtain `external/tennis_atp/`.
 ```bash
 git clone --depth 1 \
   https://github.com/Aneeshers/tennis-sackmann-archive.git \
   external/tennis-sackmann-archive
 ```
+This also writes `data/interim/sackmann_name_matching_review.csv`, a report of every player-name match decision (exact, fuzzy, or unresolved) — worth reviewing manually if match coverage looks low.
 
 Run the enrichment step:
 
+Computes pre-match player history, head-to-head, and market-odds features, builds a symmetric (player-order-independent) dataset, and runs a Random Forest baseline with RFECV feature selection:
 ```bash
 uv run python scripts/data_cleaner/enrich_with_sackmann.py \
   --sackmann-dir external/tennis-sackmann-archive/atp
@@ -354,6 +359,7 @@ report, ROC curve, feature importance and match-level error diagnostics.
 uv run python scripts/models/create_catboost_notebook.py --execute
 uv run python scripts/models/create_catboost_notebook.py --language it --execute
 ```
+Produces `data/interim/tennis_matches_features.data` and `data/interim/tennis_matches_features_metadata.json` (feature list, RFECV results, and baseline CV metrics).
 
 They create `docs/catboost_training_analysis.ipynb` and
 `docs/catboost_training_analysis_it.ipynb`. Run the trainer first; **Run All**
@@ -372,6 +378,7 @@ uv run python scripts/models/predict_catboost.py \
   --metrics data/interim/catboost_metrics.json \
   --output data/interim/catboost_predictions.csv
 ```
+Licensed under CC BY-NC-SA 4.0 — non-commercial use with attribution.
 
 The output adds:
 
