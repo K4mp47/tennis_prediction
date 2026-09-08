@@ -98,6 +98,16 @@ def parse_args() -> argparse.Namespace:
         default=8,
     )
 
+    parser.add_argument(
+        "--skip-model-analysis",
+        action="store_true",
+        help=(
+            "Build and save the feature dataset without running the optional "
+            "Random Forest baseline and RFECV diagnostics. Recommended when "
+            "the next step performs its own model selection, such as CatBoost."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -1577,14 +1587,25 @@ def main() -> None:
     # Model
     # ---------------------------------------------------------------
 
-    metrics = run_baseline_and_rfecv(
-        X,
-        y,
-        numeric_features,
-        categorical_features,
-        rfecv_step=args.rfecv_step,
-        rfecv_min_features=args.rfecv_min_features,
-    )
+    if args.skip_model_analysis:
+        print()
+        print("MODEL BASELINE / RFECV skipped by request.")
+        metrics = {
+            "skipped": True,
+            "reason": (
+                "Feature artifacts built for a downstream model with its own "
+                "temporal model-selection process."
+            ),
+        }
+    else:
+        metrics = run_baseline_and_rfecv(
+            X,
+            y,
+            numeric_features,
+            categorical_features,
+            rfecv_step=args.rfecv_step,
+            rfecv_min_features=args.rfecv_min_features,
+        )
 
     # ---------------------------------------------------------------
     # Remove internal column from saved dataset
@@ -1656,6 +1677,10 @@ def main() -> None:
             args.rfecv_min_features
         ),
 
+        "model_analysis_skipped": bool(
+            args.skip_model_analysis
+        ),
+
         "metrics": metrics,
     }
 
@@ -1691,45 +1716,49 @@ def main() -> None:
         f"{df.shape}"
     )
 
-    print()
-    print(
-        "BASELINE"
-    )
+    if metrics.get("skipped"):
+        print()
+        print("BASELINE / RFECV: skipped")
+    else:
+        print()
+        print(
+            "BASELINE"
+        )
 
-    print(
-        "CV accuracy mean: "
-        f"{metrics['baseline_cv_accuracy_mean']:.4f}"
-    )
+        print(
+            "CV accuracy mean: "
+            f"{metrics['baseline_cv_accuracy_mean']:.4f}"
+        )
 
-    print(
-        "CV accuracy std:  "
-        f"{metrics['baseline_cv_accuracy_std']:.4f}"
-    )
+        print(
+            "CV accuracy std:  "
+            f"{metrics['baseline_cv_accuracy_std']:.4f}"
+        )
 
-    print(
-        "CV folds: "
-        f"{metrics['baseline_cv_accuracy_folds']}"
-    )
+        print(
+            "CV folds: "
+            f"{metrics['baseline_cv_accuracy_folds']}"
+        )
 
-    print()
-    print(
-        "RFECV"
-    )
+        print()
+        print(
+            "RFECV"
+        )
 
-    print(
-        "Feature iniziali dopo encoding: "
-        f"{metrics['baseline_feature_count']}"
-    )
+        print(
+            "Feature iniziali dopo encoding: "
+            f"{metrics['baseline_feature_count']}"
+        )
 
-    print(
-        "Feature selezionate: "
-        f"{metrics['rfecv_selected_feature_count']}"
-    )
+        print(
+            "Feature selezionate: "
+            f"{metrics['rfecv_selected_feature_count']}"
+        )
 
-    print(
-        "Best RFECV CV accuracy: "
-        f"{metrics['rfecv_best_cv_accuracy']:.4f}"
-    )
+        print(
+            "Best RFECV CV accuracy: "
+            f"{metrics['rfecv_best_cv_accuracy']:.4f}"
+        )
 
     print()
     print(
