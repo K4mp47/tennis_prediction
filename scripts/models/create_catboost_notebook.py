@@ -67,6 +67,15 @@ progetto prima del notebook. Il trainer esegue `model.fit(X_train, y_train)`
 e salva il modello. Il notebook valuta il modello salvato e verifica i risultati
 rispetto alle metriche di training.""",
         "## 6. Valutazione del classificatore",
+        """### Sintesi della valutazione
+
+L'accuracy misura quante classi sono previste correttamente alla soglia 0,5;
+la ROC AUC misura la qualita' dell'ordinamento delle probabilita'; log loss e
+Brier score valutano la qualita' delle probabilita' e sono migliori quando
+sono piu' bassi. La tabella confronta CatBoost sia con la baseline ingenua sia
+con le probabilita' di mercato, un riferimento piu' competitivo. Il divario
+tra training e holdout e' contenuto, ma un singolo holdout riutilizzato non
+basta per escludere overfitting o dimostrare generalizzazione futura.""",
         "### Matrice di confusione",
         "### Precisione, richiamo e F1-score",
         "### Curva ROC",
@@ -117,6 +126,9 @@ diversa della distribuzione, senza implicare causalita'.""",
         "test accuracy**, so the result is stable on future": "di accuratezza sul test**, quindi il risultato e' stabile sulle",
         "matches.": "partite future.",
         "The model improves clearly over the naive baseline.": "Il modello migliora chiaramente rispetto alla baseline ingenua.",
+        "CatBoost has slightly higher accuracy than the market baseline, but the": "CatBoost ha un'accuracy leggermente superiore alla baseline di mercato, ma il",
+        "market is better on ROC AUC, log loss and Brier score. The run therefore": "mercato e' migliore per ROC AUC, log loss e Brier score. Questa esecuzione quindi",
+        "does not demonstrate a reliable predictive advantage over the market.": "non dimostra un vantaggio predittivo affidabile rispetto al mercato.",
         "It ties the market baseline on accuracy, but the market remains slightly": "Pareggia la baseline di mercato sull'accuratezza, ma il mercato resta leggermente",
         "better on ROC AUC, log loss and Brier score. This run therefore does not": "migliore per ROC AUC, log loss e Brier score. Questa esecuzione quindi non",
         "demonstrate predictive advantage over the betting market.": "dimostra un vantaggio predittivo rispetto al mercato delle scommesse.",
@@ -420,6 +432,16 @@ display(results)
 print(f"Training accuracy: {train_accuracy:.4f}")
 print("Saved model metrics verified.")"""
         ),
+        new_markdown_cell(
+            """### Evaluation summary
+
+Accuracy measures correct class predictions at the 0.5 threshold; ROC AUC
+measures probability ranking; log loss and Brier score evaluate probability
+quality and are better when lower. The table compares CatBoost with both the
+naive baseline and the more competitive market probabilities. The small gap
+between training and holdout accuracy shows no severe visible overfitting, but
+one reused holdout cannot rule it out or establish future generalization."""
+        ),
         new_markdown_cell("### Confusion matrix"),
         new_code_cell(
             """ConfusionMatrixDisplay.from_predictions(
@@ -678,6 +700,9 @@ print(
   balanced.
 - CatBoost obtains **{holdout_accuracy:.4f}** holdout accuracy with fixed parameters.
 - The model improves clearly over the naive baseline.
+- CatBoost has slightly higher accuracy than the market baseline, but the
+  market is better on ROC AUC, log loss and Brier score. The run therefore
+  does not demonstrate a reliable predictive advantage over the market.
 - Market-implied probabilities are the most important features. Therefore,
   part of the predictive power comes from information already contained in
   betting odds.
