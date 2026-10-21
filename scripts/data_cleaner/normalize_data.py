@@ -38,7 +38,7 @@ RAW_TO_NORMALIZED_COLUMNS = {
     "BFEW": "bfe_winner",
     "BFEL": "bfe_loser",
 }
-
+#colonne con esiti partite -> escluse
 LEAKAGE_COLUMNS = [
     "W1", "L1",
     "W2", "L2",
@@ -47,7 +47,7 @@ LEAKAGE_COLUMNS = [
     "W5", "L5",
     "Wsets", "Lsets",
 ]
-
+#nel dataset finale
 FINAL_COLUMNS = [
     "source_year",
     "atp",
@@ -78,7 +78,7 @@ FINAL_COLUMNS = [
     "has_any_market_odds",
 ]
 
-
+#col contengono numeri
 NUMERIC_COLUMNS = [
     "source_year",
     "atp",
@@ -99,48 +99,48 @@ NUMERIC_COLUMNS = [
     "bfe_loser",
 ]
 
-
+#Sceglie file da leggere e dove salvi dati puliti
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser( #legge comandi da terminale
         description="Normalize raw Tennis-Data matches before feature engineering."
     )
-    parser.add_argument(
+    parser.add_argument(#definisce percorso file di partenza
         "--input",
         type=Path,
-        default=Path(Path(__file__).resolve().parents[2] / "data" / "interim" / "tennis_matches_raw.data"),
+        default=Path(Path(__file__).resolve().parents[2] / "data" / "interim" / "tennis_matches_raw.data"), #specifica percorso
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path(Path(__file__).resolve().parents[2] / "data" / "interim" / "tennis_matches_cleaned.data"),
     )
-    return parser.parse_args()
+    return parser.parse_args() #legge argomenti passati da terminale, restituisce oggetto con informazioni
 
-
-def clean_string(value: object) -> str | None:
-    if pd.isna(value):
+#elimina spazi inutili e uniforma i valori testuali
+def clean_string(value: object) -> str | None: #può ricevere valori di tipi diversi
+    if pd.isna(value): #se valore mancante
         return None
 
-    text = str(value).strip()
-    text = " ".join(text.split())
+    text = str(value).strip() #str(value) da valore a testo, strip() elimina spazi inizio e fine.
+    text = " ".join(text.split()) #split() divide testo dove ci sono spazi, join ricompone lasciando 1 spazio tra ogni parola
 
-    if text == "":
+    if text == "": #se testo è vuoto
         return None
 
     return text
 
-
+#Pulisce nome giocatori
 def normalize_player_name(value: object) -> str | None:
-    text = clean_string(value)
+    text = clean_string(value) #passa nome a clean_string
 
-    if text is None:
+    if text is None: #se testo vuoto
         return None
 
-    # Keep the Tennis-Data format, but remove repeated whitespace.
-    # Do not aggressively rewrite names here: aliases are a later entity-resolution problem.
+    #Keep the Tennis-Data format, but remove repeated whitespace.
+    #Don't aggressively rewrite names here: aliases are a later entity-resolution problem.
     return text
 
-
+#Uniforma la categoria del torneo
 def normalize_series(value: object) -> str:
     text = clean_string(value)
 
@@ -157,30 +157,30 @@ def normalize_series(value: object) -> str:
         "International": "International",
     }
 
-    return aliases.get(text, text)
+    return aliases.get(text, text) #cerca nel dizionario aliases, se trova da nuova forma standard; altrimenti originale.
 
-
+#Uniforma il tipo di campo, distingue indoor da outdoor
 def normalize_court(value: object) -> str:
     text = clean_string(value)
 
     if text is None:
         return "Unknown"
 
-    text = text.title()
+    text = text.title() #1° lettera maiuscolo ogni parola
 
     if text in {"Indoor", "Outdoor"}:
         return text
 
     return "Unknown"
 
-
+#superficie campo a quattro categorie
 def normalize_surface(value: object) -> str:
     text = clean_string(value)
 
     if text is None:
         return "Unknown"
 
-    text = text.title()
+    text = text.title() #1° letter uppercase
 
     aliases = {
         "Hard": "Hard",
@@ -189,9 +189,9 @@ def normalize_surface(value: object) -> str:
         "Carpet": "Carpet",
     }
 
-    return aliases.get(text, "Unknown")
+    return aliases.get(text, "Unknown") #return one of the four or unknown
 
-
+#standardize tournment turn
 def normalize_round(value: object) -> str:
     text = clean_string(value)
 
@@ -212,24 +212,24 @@ def normalize_round(value: object) -> str:
         "Round Robin": "Round Robin",
     }
 
-    return aliases.get(text, text)
+    return aliases.get(text, text) #search in aliases dictionary, if new standard form; otherwise original one
 
-
+#load raw dataset
 def load_raw_table(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Input file does not exist: {path}")
 
-    return pd.read_csv(path)
+    return pd.read_csv(path) #read csv and return dataframe
 
-
-def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+#main cleaning function
+def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]: #from raw dataset -> clean dataset + metadata dictionary with transformation done
     metadata: dict = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "input_rows": int(len(raw_df)),
-        "input_columns": list(raw_df.columns),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(), #date + hour -> string
+        "input_rows": int(len(raw_df)), #count raw
+        "input_columns": list(raw_df.columns), #list column names
     }
 
-    missing_required = [
+    missing_required = [ #check if there are all the col
         col for col in RAW_TO_NORMALIZED_COLUMNS
         if col not in raw_df.columns
     ]
@@ -238,13 +238,13 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         raise ValueError(f"Missing required columns: {missing_required}")
 
     # Remove exact duplicate raw rows before any transformation.
-    duplicate_count = int(raw_df.duplicated().sum())
-    df = raw_df.drop_duplicates().copy()
+    duplicate_count = int(raw_df.duplicated().sum()) #count duplicates
+    df = raw_df.drop_duplicates().copy() #eliminate duplicates and create new copy of the tab
 
     # Filter completed matches only.
-    df["Comment"] = df["Comment"].map(clean_string)
+    df["Comment"] = df["Comment"].map(clean_string) #clean col "comment"
     before_completed_filter = len(df)
-    df = df[df["Comment"].str.lower() == "completed"].copy()
+    df = df[df["Comment"].str.lower() == "completed"].copy() #keep raw where value is completed, not considering upper and lowercase
     removed_not_completed = before_completed_filter - len(df)
 
     # Rename only columns useful before feature engineering.
@@ -253,10 +253,10 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     # Normalize dates.
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    invalid_dates = int(df["date"].isna().sum())
-    df = df.dropna(subset=["date"])
+    invalid_dates = int(df["date"].isna().sum()) #count na
+    df = df.dropna(subset=["date"]) #not valid date -> NaT -> deleted
 
-    # Normalize strings.
+    # Normalize strings. value mancanti di location and tournament -> Unknown
     for col in ["location", "tournament"]:
         df[col] = df[col].map(clean_string).fillna("Unknown")
 
@@ -267,22 +267,22 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df["winner_name"] = df["winner_name"].map(normalize_player_name)
     df["loser_name"] = df["loser_name"].map(normalize_player_name)
 
-    missing_players = int(
+    missing_players = int( #delete match without the names of winner/loser
         df["winner_name"].isna().sum() + df["loser_name"].isna().sum()
     )
     df = df.dropna(subset=["winner_name", "loser_name"])
 
-    # Numeric coercion.
+    # Numeric conversion o NaN
     for col in NUMERIC_COLUMNS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(df[col], errors="coerce") #coerce transform to NaN unparseable values
 
     # Enforce integer-like columns as nullable integers.
     for col in ["source_year", "atp", "best_of"]:
-        df[col] = df[col].round().astype("Int64")
+        df[col] = df[col].round().astype("Int64") #round and int64 works for both int and NaN
 
     # Basic validity filters.
     before_validity = len(df)
-
+    #delete raw where winner and loser have same name
     df = df[df["winner_name"] != df["loser_name"]].copy()
 
     # Ranks and points can be missing in raw data, but impossible values should become missing.
@@ -305,13 +305,12 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "bfe_winner",
         "bfe_loser",
     ]
-
     for col in odds_columns:
         df.loc[df[col] <= 1.0, col] = np.nan
-
+    #1 se è disponibile almeno una quota, altrimenti 0
     df["has_any_market_odds"] = df[odds_columns].notna().any(axis=1).astype(int)
 
-    removed_invalid = before_validity - len(df)
+    removed_invalid = before_validity - len(df) #number of raw deleted by validity check
 
     # Keep only pre-feature-engineering normalized columns.
     df = df[FINAL_COLUMNS].copy()
@@ -324,7 +323,7 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     # Store dates in ISO format for .data CSV.
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
-
+    #register how many raw are "still standing"
     metadata.update(
         {
             "output_rows": int(len(df)),
@@ -361,13 +360,13 @@ def normalize_table(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 
 def main() -> None:
+    #Legge gli argomenti, carica i dati, li normalizza
     args = parse_args()
-
     raw_df = load_raw_table(args.input)
     normalized_df, metadata = normalize_table(raw_df)
-
+    #Crea la cartella di destinazione se non esiste
     args.output.parent.mkdir(parents=True, exist_ok=True)
-
+    #Scrive il dataset pulito su disco
     normalized_df.to_csv(args.output, index=False)
 
     print(f"Created normalized data: {args.output}")

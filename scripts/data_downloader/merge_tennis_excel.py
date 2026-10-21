@@ -28,7 +28,7 @@ CANONICAL_COLUMNS = [
 
 
 def extract_year(path: Path) -> int:
-    match = re.search(r"(20\d{2})", path.stem)
+    match = re.search(r"(20\d{2})", path.stem) #r"(20\d{2})" regex fatta da 20 e altre 2 cifre.
     if not match:
         raise ValueError(f"Cannot determine year from {path.name}")
     return int(match.group(1))
@@ -40,7 +40,7 @@ def load_and_normalize(path: Path) -> pd.DataFrame:
 
     # Remove accidental empty columns such as "Unnamed: 36".
     frame = frame.dropna(axis="columns", how="all")
-    frame.columns = frame.columns.astype(str).str.strip()
+    frame.columns = frame.columns.astype(str).str.strip() #astype(str) da nomi colonne in stringhe. .str.strip() Rimuove spazi all'inizio e fine.
 
     # Preserve the union schema. Columns unavailable in a year become NA.
     frame = frame.reindex(columns=CANONICAL_COLUMNS)
@@ -61,17 +61,17 @@ def main() -> None:
 
     merged = merged.sort_values(
         ["Date", "ATP", "Tournament", "Winner", "Loser"],
-        kind="stable",
-        na_position="last",
+        kind="stable", #mantiene questo ordine
+        na_position="last", #date mancanti alla fine
     ).reset_index(drop=True)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
+    merged.to_csv(OUTPUT_FILE, index=False, encoding="utf-8") #index=false impedisce a pandas di aggiungere una colonna inutile contenente l'indice
 
     print(f"Created {OUTPUT_FILE}")
-    print(f"Rows: {len(merged):,}")
-    print(f"Columns: {len(merged.columns)}")
-    print(merged.groupby("source_year").size().to_string())
+    print(f"Rows: {len(merged):,}") #num. righe
+    print(f"Columns: {len(merged.columns)}") #num. col.
+    print(merged.groupby("source_year").size().to_string()) #quante partite per ogni anno
 
 
 if __name__ == "__main__":
