@@ -1260,55 +1260,53 @@ def run_baseline_and_rfecv(
         if keep # Include the feature only if RFECV selected it
     ]
 
-    # Train accuracy is diagnostic only.
-    # Do NOT use it as generalisation performance.
-    # ---------------------------------------------------------------
+    # Train accuracy is diagnostic only, Do NOT use it as generalisation performance-------------------------------------------
 
-    baseline_pipeline.fit(
+    baseline_pipeline.fit(   #Train the complete baseline pipeline on the full dataset
         X,
         y,
     )
 
-    train_predictions = (
-        baseline_pipeline.predict(X)
+    train_predictions = ( #storing predictions
+        baseline_pipeline.predict(X) #Predict target labels for same samples of training
     )
 
-    return {
-        "samples": int(len(X)),
-        "cv_folds": int(split_count),
+    return { #evaluation results as a Python dictionary
+        "samples": int(len(X)), #tot number of samples
+        "cv_folds": int(split_count), #tot number split during cv
 
-        "baseline_cv_accuracy_mean": float(
+        "baseline_cv_accuracy_mean": float( #media degli split della c.v.
             np.mean(baseline_scores)
         ),
 
-        "baseline_cv_accuracy_std": float(
+        "baseline_cv_accuracy_std": float( #deviazione standard cv
             np.std(baseline_scores)
         ),
 
-        "baseline_cv_accuracy_folds": [
+        "baseline_cv_accuracy_folds": [ #each accuracy of the cv
             float(v)
             for v in baseline_scores
         ],
 
-        "baseline_train_accuracy": float(
+        "baseline_train_accuracy": float( #accuracy sui dati di training
             accuracy_score(
                 y,
                 train_predictions,
             )
         ),
 
-        "baseline_feature_count": int(
+        "baseline_feature_count": int( #number feature post preprocessing
             len(feature_names)
         ),
 
-        "rfecv_selected_feature_count": int(
+        "rfecv_selected_feature_count": int( #number feature selected by rfecv
             rfecv.n_features_
         ),
 
         "rfecv_selected_features":
             selected_feature_names,
 
-        "rfecv_best_cv_accuracy": float(
+        "rfecv_best_cv_accuracy": float( #massimo accuracy tra i refcv
             np.max(
                 rfecv.cv_results_[
                     "mean_test_score"
@@ -1316,7 +1314,7 @@ def run_baseline_and_rfecv(
             )
         ),
 
-        "rfecv_cv_accuracy_path": [
+        "rfecv_cv_accuracy_path": [ #all refcv accuracy
             float(v)
             for v in
             rfecv.cv_results_[
@@ -1326,24 +1324,22 @@ def run_baseline_and_rfecv(
     }
 
 
-# ---------------------------------------------------------------------------
-# VALIDATION
-# ---------------------------------------------------------------------------
+# VALIDATION(to check anomalies)---------------------------------------------------------------
 
-def validate_features(
+def validate_features( #func to validates dataset features
         df: pd.DataFrame,
 ) -> None:
 
     print()
     print("FEATURE VALIDATION")
 
-    problems = []
+    problems = [] #empty list
 
-    # Probability/rate columns should remain in [0, 1].
-    rate_columns = [
+    #Probability/rate columns should remain in [0, 1].
+    rate_columns = [ #create list
         c
         for c in df.columns
-        if (
+        if ( #include se nei nomi c'è:...
                 c.endswith("_rate_before")
                 or c.endswith("_win_rate_before")
                 or c.endswith("_rate_diff")
@@ -1351,48 +1347,48 @@ def validate_features(
     ]
 
     for column in rate_columns:
-        values = pd.to_numeric(
+        values = pd.to_numeric( #Convert the column's values to numeric data where possible
             df[column],
-            errors="coerce",
+            errors="coerce", #otherwise to NaN
         ).dropna()
 
-        if len(values) == 0:
+        if len(values) == 0: #skip col if there are no valid numeric value
             continue
 
-        if column.endswith("_diff"):
+        if column.endswith("_diff"): #Skip the [0, 1] range because rate differences can be negative
             continue
 
-        invalid = (
+        invalid = ( #count values outside 0-1 range
                 (values < 0)
                 | (values > 1)
         ).sum()
 
-        if invalid:
+        if invalid: #report invalids values
             problems.append(
                 f"{column}: "
                 f"{invalid} values outside [0,1]"
             )
 
-    # Age sanity check.
+    #Age sanity check
     for column in [
-        "winner_age_years",
-        "loser_age_years",
+        "winner_age_years", #Specify the column
+        "loser_age_years", #Specify the column
     ]:
-        if column not in df.columns:
-            continue
+        if column not in df.columns: # Check if current age column exists
+            continue #skip if col doesn't exist
 
-        values = pd.to_numeric(
+        values = pd.to_numeric( #Convert the age values to numeric data where possible
             df[column],
             errors="coerce",
         ).dropna()
 
-        invalid = (
+        invalid = ( #Identify and count ages that fall outside the expected range
                 (values < 14)
                 | (values > 60)
         ).sum()
 
         if invalid:
-            problems.append(
+            problems.append( #Add and report the age validation problem to the list
                 f"{column}: "
                 f"{invalid} implausible ages"
             )
@@ -1410,62 +1406,50 @@ def validate_features(
     print("OK - nessuna anomalia rilevante.")
 
 
-# ---------------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------------
-
+# MAIN--------------------------------------------------------------------
 def main() -> None:
-    args = parse_args()
+    args = parse_args() #Legge argomenti passati da terminale quando esegui script
 
-    print("=" * 70)
+    print("=" * 70) #70 volte =====...
     print("BUILD FEATURES")
     print("=" * 70)
 
     print()
-    print(
+    print( #path input dataset
         f"Input: {args.input}"
     )
 
-    # ---------------------------------------------------------------
-    # Load
-    # ---------------------------------------------------------------
-
+    #Load-clean-dataset---------------------------------------------------------
     df = load_clean_data(
-        args.input
+        args.input #path
     )
 
-    print(
+    print( #number of matches loaded from input dataset
         f"Match caricati: {len(df):,}"
     )
 
-    # ---------------------------------------------------------------
-    # Historical player features
-    # ---------------------------------------------------------------
+    #Historical player features------------------------------------------------------------
 
     print()
     print(
         "Costruzione storico giocatori..."
     )
 
-    df = build_player_history_features(
+    df = build_player_history_features( #add history player feature
         df
     )
 
-    # ---------------------------------------------------------------
-    # H2H
-    # ---------------------------------------------------------------
+    # H2H -------------------------------------------------------------
 
     print(
         "Costruzione feature H2H..."
     )
 
-    df = build_head_to_head_features(
-        df
+    df = build_head_to_head_features( #add h2h feature
+        df #pass dataset to feuture-building func
     )
 
-    # ---------------------------------------------------------------
-    # Model features
-    # ---------------------------------------------------------------
+    # Model features----------------------------------------------------------
 
     print(
         "Costruzione feature modello..."
@@ -1473,19 +1457,13 @@ def main() -> None:
 
     df = add_model_features(
         df,
-        rare_threshold=args.rare_threshold,
+        rare_threshold=args.rare_threshold, #Specify threshold used to handle rare categories
     )
 
-    # ---------------------------------------------------------------
-    # Validation before symmetry
-    # ---------------------------------------------------------------
+    # Validation before symmetry-------------------------------------------------------
+    validate_features(df) #Check feature values and raise an error if defined validation rules are violated
 
-    validate_features(df)
-
-    # ---------------------------------------------------------------
-    # Symmetric representation
-    # ---------------------------------------------------------------
-
+    # Symmetric representation--------------------------------------------------
     print()
     print(
         "Costruzione dataset simmetrico..."
@@ -1500,12 +1478,10 @@ def main() -> None:
         f"{len(df):,}"
     )
 
-    # ---------------------------------------------------------------
-    # Feature matrix
-    # ---------------------------------------------------------------
+    # Feature matrix------------------------------------------------------
 
     X, y, numeric_features, categorical_features = (
-        build_feature_matrix(df)
+        build_feature_matrix(df) #Extract the model inputs, target labels and feature classifications
     )
 
     print()
@@ -1519,77 +1495,69 @@ def main() -> None:
         f"{len(categorical_features)}"
     )
 
-    # ---------------------------------------------------------------
-    # Model
-    # ---------------------------------------------------------------
+    # Model---------------------------------------------------------
 
-    if args.skip_model_analysis:
+    if args.skip_model_analysis: #Check whether model analysis was disabled through a command-line argument
         print()
         print("MODEL BASELINE / RFECV skipped by request.")
         metrics = {
-            "skipped": True,
+            "skipped": True, #Record that model analysis not performed
             "reason": (
                 "Feature artifacts built for a downstream model with its own "
                 "temporal model-selection process."
             ),
         }
-    else:
+    else: #model analysis when not disabled
         metrics = run_baseline_and_rfecv(
             X,
             y,
             numeric_features,
             categorical_features,
-            rfecv_step=args.rfecv_step,
-            rfecv_min_features=args.rfecv_min_features,
+            rfecv_step=args.rfecv_step, #how many features RFECV removes at each elimination step
+            rfecv_min_features=args.rfecv_min_features, #min number of features RFECV
         )
 
-    # ---------------------------------------------------------------
-    # Remove internal column from saved dataset
-    # ---------------------------------------------------------------
+    # Remove internal column from saved dataset----------------------------------------------------
 
-    if "match_id_internal" in df.columns:
+    if "match_id_internal" in df.columns: #internal match identifier exists in dataset
         df = df.drop(
             columns=["match_id_internal"]
         )
 
-    # ---------------------------------------------------------------
-    # Save features
-    # ---------------------------------------------------------------
+    # Save features-----------------------------------------------------
 
-    args.output_features.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    args.output_features.parent.mkdir( #Create output directory if not exist
+        parents=True, #create any missing parent directories too
+        exist_ok=True, #no raising error if directory already exists
     )
 
-    df.to_csv(
-        args.output_features,
-        index=False,
+    df.to_csv( #export in csv
+        args.output_features, #destination path
+        index=False, #NOT include dataframe index as a column
     )
 
-    # ---------------------------------------------------------------
-    # Metadata
-    # ---------------------------------------------------------------
+    # Metadata-------------------------------------------------------
 
-    metadata = {
-        "created_at_utc": (
+    metadata = { #create dictionary containing information about the generated artifacts
+        "created_at_utc": ( #Record time metadata is generated
             datetime.now(
                 timezone.utc
-            ).isoformat()
+            ).isoformat() # Convert the UTC timestamp into an ISO 8601 string
         ),
 
-        "input_path": str(
-            args.input
+        "input_path": str( #Store path as a string
+            args.input #path
         ),
 
         "output_features_path": str(
             args.output_features
         ),
 
-        "output_rows": int(
-            len(df)
+        "output_rows": int( # Record the number of rows
+            len(df) #count
         ),
 
-        "output_columns": list(
+        "output_columns": list( #records names as a list
             df.columns
         ),
 
@@ -1613,46 +1581,44 @@ def main() -> None:
             args.rfecv_min_features
         ),
 
-        "model_analysis_skipped": bool(
+        "model_analysis_skipped": bool( #Record whether baseline and RFECV analysis was skipped
             args.skip_model_analysis
         ),
 
-        "metrics": metrics,
+        "metrics": metrics, #Include model evaluation metrics or the reason analysis was skipped
     }
 
-    args.output_metadata.parent.mkdir(
+    args.output_metadata.parent.mkdir( #Create directory for metadata file if necessary
         parents=True,
         exist_ok=True,
     )
 
-    args.output_metadata.write_text(
-        json.dumps(
-            metadata,
-            indent=2,
+    args.output_metadata.write_text( # Write the metadata dictionary to a file
+        json.dumps( #in a JSON-formatted string
+            metadata,  #Provide the metadata dictionary to save
+            indent=2, #Format json with two spaces of indentation for readability
         ),
         encoding="utf-8",
     )
 
-    # ---------------------------------------------------------------
-    # Report
-    # ---------------------------------------------------------------
+    #Report--------------------------------------------------------
 
     print()
     print("=" * 70)
     print("FEATURE BUILD COMPLETATO")
     print("=" * 70)
 
-    print(
+    print( #path output_features
         f"Dataset: "
         f"{args.output_features}"
     )
 
-    print(
+    print( #dimensions final dataset
         f"Shape: "
         f"{df.shape}"
     )
 
-    if metrics.get("skipped"):
+    if metrics.get("skipped"): #se attivi args.skip_model_analysis e fai model_analysis, skip
         print()
         print("BASELINE / RFECV: skipped")
     else:
@@ -1661,20 +1627,52 @@ def main() -> None:
             "BASELINE"
         )
 
-        print(
+        print( #mean accuracy
             "CV accuracy mean: "
             f"{metrics['baseline_cv_accuracy_mean']:.4f}"
         )
 
         print(
             "CV accuracy std:  "
-            f"{metrics['baseline_cv_accuracy_std']:.4f}"
+            f"{metrics['baseline_cv_accuracy_std']:.4f}" #four decimal
         )
 
-        print(
+        print( #accuracy for each fold in list
             "CV folds: "
             f"{metrics['baseline_cv_accuracy_folds']}"
         )
 
         print()
-        pr
+        print(
+            "RFECV"
+        )
+
+        print(
+            "Feature iniziali dopo encoding: "
+            f"{metrics['baseline_feature_count']}" #tot number Feature
+        )
+
+        print(
+            "Feature selezionate: "
+            f"{metrics['rfecv_selected_feature_count']}" #tot number Feature selected
+        )
+
+        print(
+            "Best RFECV CV accuracy: "
+            f"{metrics['rfecv_best_cv_accuracy']:.4f}" #best mean cv accuracy
+        )
+
+    print()
+    print(
+        "Metadata:"
+        f" {args.output_metadata}" #path output_metadata
+    )
+
+    print()
+    print(
+        "Pipeline completata."
+    )
+
+
+if __name__ == "__main__":
+    main()
