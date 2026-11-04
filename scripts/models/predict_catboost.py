@@ -72,7 +72,9 @@ def score_rows(
 
     # Select only model features in training order; preserve other columns in the output.
     prepared = prepare_catboost_features(
-        frame.loc[:, feature_names], numeric_features, categorical_features
+        frame.loc[:, list(feature_names)],
+        list(numeric_features),
+        list(categorical_features),
     )
     # Class 1 is a player-A win; probabilities at the threshold also select player A.
     player_a_probability = model.predict_proba(prepared)[:, 1]

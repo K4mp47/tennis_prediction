@@ -4,6 +4,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -117,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args() #legge argomenti passati da terminale, restituisce oggetto con informazioni
 
 #elimina spazi inutili e uniforma i valori testuali
-def clean_string(value: object) -> str | None: #può ricevere valori di tipi diversi
+def clean_string(value: Any) -> str | None: #può ricevere valori di tipi diversi
     if pd.isna(value): #se valore mancante
         return None
 

@@ -92,18 +92,12 @@ import argparse
 import re
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-
-try:
-    from rapidfuzz import fuzz as rf_fuzz
-    from rapidfuzz import process as rf_process
-
-    HAS_RAPIDFUZZ = True
-except ImportError:
-    HAS_RAPIDFUZZ = False
+from rapidfuzz import fuzz as rf_fuzz
+from rapidfuzz import process as rf_process
 
 
 # ============================================================================
@@ -207,7 +201,7 @@ def parse_args() -> argparse.Namespace:
 # GENERIC HELPERS
 # ============================================================================
 
-def normalize_text(value: object) -> str:
+def normalize_text(value: Any) -> str:
     """
     Normalizza testo per confronti robusti.
 
@@ -242,7 +236,8 @@ def normalize_text(value: object) -> str:
 
     return " ".join(text.split())
 
-
+# The function converts a pandas Series to numeric values, 
+# coercing errors to NaN. The function is as follows:
 def safe_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
@@ -312,7 +307,7 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
             "Controlla --sackmann-dir."
         )
 
-    print(f"Carico giocatori Sackmann: {path}")
+    print(f"Carico giocateruns the failing cori Sackmann: {path}")
 
     df = pd.read_csv(
         path,
@@ -725,75 +720,73 @@ def build_name_map(
         # 4. Fuzzy surname
         # ------------------------------------------------------------
 
-        if HAS_RAPIDFUZZ:
+        fuzzy_results = rf_process.extract(
+            surname,
+            surname_list,
+            scorer=rf_fuzz.ratio,
+            limit=3,
+        )
 
-            fuzzy_results = rf_process.extract(
-                surname,
-                surname_list,
-                scorer=rf_fuzz.ratio,
-                limit=3,
+        if fuzzy_results:
+
+            best_surname, best_score, _ = fuzzy_results[0]
+
+            second_score = (
+                fuzzy_results[1][1]
+                if len(fuzzy_results) > 1
+                else None
             )
 
-            if fuzzy_results:
-
-                best_surname, best_score, _ = fuzzy_results[0]
-
-                second_score = (
-                    fuzzy_results[1][1]
-                    if len(fuzzy_results) > 1
-                    else None
+            candidates = [
+                c
+                for c in by_surname.get(
+                    best_surname,
+                    [],
                 )
+                if not initial
+                    or c["initial"] == initial
+            ]
 
-                candidates = [
-                    c
-                    for c in by_surname.get(
-                        best_surname,
-                        [],
-                    )
-                    if not initial
-                       or c["initial"] == initial
-                ]
+            margin_ok = (
+                    second_score is None
+                    or best_score - second_score >= fuzzy_margin
+            )
 
-                margin_ok = (
-                        second_score is None
-                        or best_score - second_score >= fuzzy_margin
-                )
+            if (
+                    best_score >= fuzzy_threshold
+                    and margin_ok
+                    and len(candidates) == 1
+            ):
 
-                if (
-                        best_score >= fuzzy_threshold
-                        and margin_ok
-                        and len(candidates) == 1
-                ):
+                chosen = candidates[0]
 
-                    chosen = candidates[0]
-
-                    name_map[td_name] = chosen["player_id"]
-
-                    review_rows.append(
-                        {
-                            **row_base,
-                            "sackmann_name": chosen["full_name"],
-                            "player_id": chosen["player_id"],
-                            "match_method": "fuzzy_surname",
-                            "score": best_score,
-                            "second_score": second_score,
-                        }
-                    )
-
-                    continue
+                name_map[td_name] = chosen["player_id"]
 
                 review_rows.append(
                     {
                         **row_base,
-                        "sackmann_name": None,
-                        "player_id": None,
-                        "match_method": "fuzzy_ambiguous_or_low_score",
+                        "sackmann_name": chosen["full_name"],
+                        "player_id": chosen["player_id"],
+                        "match_method": "fuzzy_surname",
                         "score": best_score,
                         "second_score": second_score,
                     }
                 )
 
                 continue
+
+            review_rows.append(
+                {
+                    **row_base,
+                    "sackmann_name": None,
+                    "player_id": None,
+                    "match_method": "fuzzy_ambiguous_or_low_score",
+                    "score": best_score,
+                    "second_score": second_score,
+                }
+            )
+
+            continue
 
         # ------------------------------------------------------------
         # 5. Unmatched
@@ -1370,7 +1363,7 @@ def main() -> None:
     )
 
     def get_bio(
-            player_id: object,
+            player_id: Any,
             field: str,
     ):
         if pd.isna(player_id):
