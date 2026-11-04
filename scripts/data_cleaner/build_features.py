@@ -1675,6 +1675,3 @@ def main() -> None:
             "CV folds: "
             f"{metrics['baseline_cv_accuracy_folds']}"
         )
-
-        print()
-        pr

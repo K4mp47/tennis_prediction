@@ -11,9 +11,12 @@ from catboost import CatBoostClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
 
 
+# Shared preprocessing below is also imported by prediction and notebook code.
+# Both training and inference use this token for missing categorical values.
 MISSING_CATEGORY = "__MISSING__"
 
 
+# Command-line interface: resolve default dataset and artifact paths from the project root.
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Train the CatBoost tennis model.")
@@ -40,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Feature preparation: keep the same input representation during training and inference.
 def prepare_catboost_features(
     features: pd.DataFrame,
     numeric_features: list[str],
@@ -49,9 +53,11 @@ def prepare_catboost_features(
 
     features = features.copy()
 
+    # Invalid numeric values become NaN, which CatBoost handles as missing data.
     for column in numeric_features:
         features[column] = pd.to_numeric(features[column], errors="coerce")
 
+    # CatBoost categorical inputs must be strings with no null values.
     for column in categorical_features:
         features[column] = (
             features[column]
@@ -63,12 +69,14 @@ def prepare_catboost_features(
     return features
 
 
+# Holdout selection: split distinct dates so matches on one date stay together.
 def chronological_split(
     data: pd.DataFrame,
     test_fraction: float = 0.15,
 ) -> tuple[pd.Series, pd.Series]:
     """Use old matches for training and the newest dates for testing."""
 
+    # The fraction applies to unique dates, so the row fraction may differ.
     dates = sorted(data["date"].unique())
     split_index = int(len(dates) * (1 - test_fraction))
     split_date = dates[split_index]
@@ -79,15 +87,17 @@ def chronological_split(
     return train_mask, test_mask
 
 
+# Training workflow: load -> prepare -> split -> fit -> evaluate -> save.
 def main() -> None:
     args = parse_args()
 
-    # 1. Load data.
+    # 1. Load the engineered dataset and its feature schema.
     data = pd.read_csv(args.input)
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
 
     numeric_features = metadata["numeric_features"]
     categorical_features = metadata["categorical_features"]
+    # Metadata defines both the selected columns and their order for the model.
     feature_names = numeric_features + categorical_features
 
     data["date"] = pd.to_datetime(data["date"], errors="raise")
@@ -97,9 +107,10 @@ def main() -> None:
         numeric_features,
         categorical_features,
     )
+    # Class 1 means the oriented player A wins; class 0 means player B wins.
     y = data["player_a_win"].astype(int)
 
-    # 2. Chronological train/test split.
+    # 2. Train on older dates and evaluate on newer dates to avoid a random time split.
     train_mask, test_mask = chronological_split(data)
 
     X_train = X.loc[train_mask]
@@ -125,6 +136,7 @@ def main() -> None:
 
     # 5. Predict and evaluate.
     predictions = model.predict(X_test).astype(int).ravel()
+    # Probability column 1 corresponds to the player-A-win target.
     probabilities = model.predict_proba(X_test)[:, 1]
 
     accuracy = accuracy_score(y_test, predictions)
@@ -139,6 +151,7 @@ def main() -> None:
     args.output_model.parent.mkdir(parents=True, exist_ok=True)
     model.save_model(str(args.output_model))
 
+    # Prediction reads this schema alongside the saved model to rebuild its inputs.
     metrics = {
         "algorithm": "CatBoostClassifier",
         "numeric_features": numeric_features,
@@ -154,5 +167,6 @@ def main() -> None:
     )
 
 
+# Run the CLI only when executed directly; imports can reuse the helpers.
 if __name__ == "__main__":
     main()
