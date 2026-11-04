@@ -97,20 +97,17 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-try:
-    from rapidfuzz import fuzz as rf_fuzz
-    from rapidfuzz import process as rf_process
+try: #prova a eseguire le istruzioni successive
+    from rapidfuzz import fuzz as rf_fuzz #importa funzioni per misurare somiglianza tra stringhe
+    from rapidfuzz import process as rf_process #importa strumenti per cercare nome più simile tra più nomi
 
-    HAS_RAPIDFUZZ = True
-except ImportError:
+    HAS_RAPIDFUZZ = True #libreria disponibile
+except ImportError: #se nn installata
     HAS_RAPIDFUZZ = False
 
+#ARGUMENTS=======================================================================
 
-# ============================================================================
-# ARGUMENTS
-# ============================================================================
-
-def parse_args() -> argparse.Namespace:
+def parse_args() -> argparse.Namespace: #create parser
     parser = argparse.ArgumentParser(
         description=(
             "Enrich the cleaned Tennis-Data dataset with "
@@ -118,13 +115,13 @@ def parse_args() -> argparse.Namespace:
         )
     )
 
-    script_root = Path(__file__).resolve().parents[2]
+    script_root = Path(__file__).resolve().parents[2] #cartella principale progetto
 
     parser.add_argument(
         "--cleaned-input",
-        type=Path,
+        type=Path, #converte il valore inserito in un percorso
         default=script_root / "data" / "interim" / "tennis_matches_cleaned.data",
-        help="Dataset prodotto da normalize_data.py.",
+        help="Dataset prodotto da normalize_data.py.", #descrizione
     )
 
     parser.add_argument(
@@ -183,7 +180,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fuzzy-threshold",
         type=int,
-        default=92,
+        default=92, #92 / 100, punteggio minimo di somiglianza per accettare candidato
         help=(
             "Score minimo fuzzy sul cognome. "
             "Default 92."
@@ -202,10 +199,7 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-
-# ============================================================================
-# GENERIC HELPERS
-# ============================================================================
+# GENERIC HELPERS===================================================================
 
 def normalize_text(value: object) -> str:
     """
@@ -218,15 +212,15 @@ def normalize_text(value: object) -> str:
     if value is None or pd.isna(value):
         return ""
 
-    text = str(value)
+    text = str(value) #value -> string
 
-    text = unicodedata.normalize(
-        "NFKD",
+    text = unicodedata.normalize( #scompone caratteri
+        "NFKD", #rimuove accenti e caratteri speciali
         text,
-    ).encode(
+    ).encode( #testo in ASCII
         "ascii",
         "ignore",
-    ).decode(
+    ).decode( #ascii in str
         "ascii",
     )
 
@@ -238,20 +232,17 @@ def normalize_text(value: object) -> str:
     text = text.replace("'", "")
     text = text.replace("’", "")
 
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text) #replace space where isn't a-z, 0-9, space
 
-    return " ".join(text.split())
+    return " ".join(text.split()) #Elimina spazi iniziali/finali, spazi multipli = 1
+
+#valori in numeri
+def safe_numeric(series: pd.Series) -> pd.Series: #riceve serie valori pandas -> restituisce serie pandas
+    return pd.to_numeric(series, errors="coerce") #se nn validi -> NaN
 
 
-def safe_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
-
-
-# ============================================================================
-# NAME PARSING
-# ============================================================================
-
-def tennis_data_name_parts(name: object) -> tuple[str, str]:
+# NAME PARSING================================================================
+def tennis_data_name_parts(name: object) -> tuple[str, str]: #COGNOME E INIZIALE NOME
     """
     Tennis-Data:
         "Nadal R." -> ("nadal", "r")
@@ -261,18 +252,18 @@ def tennis_data_name_parts(name: object) -> tuple[str, str]:
         "Roger-Vasselin E."
     """
 
-    text = normalize_text(name)
+    text = normalize_text(name) #Func input: nome-> output: copia str
 
     if not text:
-        return "", ""
+        return "", "" #2 empty str
 
-    parts = text.split()
+    parts = text.split() #"nadal r" --> "nadal", "r"
 
-    if len(parts) == 1:
-        return parts[0], ""
+    if len(parts) == 1: #if 1 word
+        return parts[0], "" #surname + iniziale vuota ""
 
-    initial = parts[-1][0]
-    surname = " ".join(parts[:-1])
+    initial = parts[-1][0] #prende prima lettera ultima parola
+    surname = " ".join(parts[:-1])  #get surname of more words, not the last word(name)
 
     return surname, initial
 
@@ -290,18 +281,15 @@ def sackmann_name_parts(full_name: object) -> tuple[str, str]:
 
     parts = text.split()
 
-    if len(parts) == 1:
-        return parts[0], parts[0][0]
+    if len(parts) == 1: #if 1 word
+        return parts[0], parts[0][0] #return surname + surname initial
 
-    first_name = parts[0]
-    surname = " ".join(parts[1:])
+    first_name = parts[0] #1 word
+    surname = " ".join(parts[1:]) #all the other words after first_name
 
     return surname, first_name[0]
 
-
-# ============================================================================
-# LOAD PLAYERS
-# ============================================================================
+# LOAD PLAYERS=====================================================================
 
 def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
     path = sackmann_dir / "atp_players.csv"
@@ -316,11 +304,11 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
 
     df = pd.read_csv(
         path,
-        dtype=str,
+        dtype=str, #legge col as str
         low_memory=False,
     )
 
-    # Compatibilità con eventuali versioni differenti.
+    #Compatibilità con eventuali versioni differenti
     rename_map = {}
 
     if "name_first" in df.columns:
@@ -337,13 +325,13 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
 
     df = df.rename(columns=rename_map)
 
-    required = {
+    required = { #col indispensabili
         "player_id",
         "first_name",
         "last_name",
     }
 
-    missing = required - set(df.columns)
+    missing = required - set(df.columns) #ret mancanti
 
     if missing:
         raise ValueError(
@@ -351,40 +339,40 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
             f"{sorted(missing)}"
         )
 
-    df["player_id"] = df["player_id"].astype(str).str.strip()
+    df["player_id"] = df["player_id"].astype(str).str.strip() #id -> str, delete space
 
-    df["full_name"] = (
+    df["full_name"] = ( #new col
             df["first_name"].fillna("")
             + " "
             + df["last_name"].fillna("")
-    ).str.strip()
+    ).str.strip() #no spazi esterni
 
     if "birth_date" in df.columns:
         df["birth_date"] = pd.to_datetime(
             df["birth_date"],
             format="%Y%m%d",
-            errors="coerce",
+            errors="coerce", #date non valide in NaT
         )
     else:
-        df["birth_date"] = pd.NaT
+        df["birth_date"] = pd.NaT #date non valide in NaT
 
-    if "height" in df.columns:
+    if "height" in df.columns: #in valore numerico
         df["height"] = safe_numeric(df["height"])
     else:
         df["height"] = np.nan
 
     if "hand" not in df.columns:
-        df["hand"] = np.nan
+        df["hand"] = np.nan #create col mano dominante
 
     df["hand"] = df["hand"].replace(
         {
             "R": "R",
             "L": "L",
-            "U": np.nan,
+            "U": np.nan, #unknown -> NaN
         }
     )
 
-    df = df[
+    df = df[ #selection final col
         [
             "player_id",
             "full_name",
@@ -399,15 +387,11 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
         keep="first",
     )
 
-    print(f"Giocatori caricati: {len(df):,}")
+    print(f"Giocatori caricati: {len(df):,}") #number of players
 
     return df
 
-
-# ============================================================================
-# VALIDATE CSV
-# ============================================================================
-
+# VALIDATE CSV=======================================================================
 def validate_csv_file(path: Path) -> bool:
     """
     Controlla rapidamente che il file non sia un HTML/404 salvato
@@ -419,11 +403,11 @@ def validate_csv_file(path: Path) -> bool:
 
     try:
         with path.open(
-                "r",
+                "r", #open file
                 encoding="utf-8",
-                errors="replace",
+                errors="replace", #sostituisce i caratteri che non riesce a decodificare
         ) as f:
-            first_line = f.readline().strip().lower()
+            first_line = f.readline().strip().lower() #read_first_line. delete space iniz/fine. tutto minuscolo
 
         if (
                 first_line.startswith("<!doctype html")
@@ -437,30 +421,26 @@ def validate_csv_file(path: Path) -> bool:
 
         return True
 
-    except OSError:
+    except OSError: #errore accesso/lettura file
         return False
 
-
-# ============================================================================
-# LOAD MATCHES
-# ============================================================================
-
+# LOAD MATCHES====================================================================================
 def load_sackmann_matches(
         sackmann_dir: Path,
         start_year: int,
         end_year: int,
 ) -> pd.DataFrame:
 
-    frames: list[pd.DataFrame] = []
-    loaded_years: list[int] = []
-    missing_years: list[int] = []
+    frames: list[pd.DataFrame] = [] #list data frame each year
+    loaded_years: list[int] = [] #list year caricati correttamente
+    missing_years: list[int] = [] #
 
     for year in range(start_year, end_year + 1):
 
-        path = sackmann_dir / f"atp_matches_{year}.csv"
+        path = sackmann_dir / f"atp_matches_{year}.csv" #path file
 
         if not path.exists():
-            missing_years.append(year)
+            missing_years.append(year) #if not exist add to missing year
             continue
 
         if not validate_csv_file(path):
@@ -469,9 +449,9 @@ def load_sackmann_matches(
         try:
             df = pd.read_csv(
                 path,
-                low_memory=False,
+                low_memory=False, #non analizzare il CSV a piccoli blocchi per dedurre il tipo di dato di ogni colonna
             )
-        except Exception as exc:
+        except Exception as exc: #error durante lettura
             print(
                 f"ATTENZIONE: impossibile leggere {path}: {exc}"
             )
@@ -491,7 +471,7 @@ def load_sackmann_matches(
                 f"colonne mancanti: {sorted(missing)}"
             )
             continue
-
+        #Memorizzazione dei file validi
         frames.append(df)
         loaded_years.append(year)
 
@@ -502,18 +482,18 @@ def load_sackmann_matches(
             f"Range: {start_year}-{end_year}"
         )
 
-    matches = pd.concat(
+    matches = pd.concat( #Unione DataFrame
         frames,
         ignore_index=True,
     )
 
-    matches["tourney_date"] = pd.to_datetime(
+    matches["tourney_date"] = pd.to_datetime( #date conversion
         matches["tourney_date"],
         format="%Y%m%d",
-        errors="coerce",
+        errors="coerce", #not valid -> NaT
     )
 
-    matches["winner_id"] = (
+    matches["winner_id"] = ( #id -> str
         matches["winner_id"]
         .astype("string")
         .str.strip()
@@ -525,7 +505,7 @@ def load_sackmann_matches(
         .str.strip()
     )
 
-    matches = matches.dropna(
+    matches = matches.dropna( #Elimina le righe che non hanno:
         subset=[
             "tourney_date",
             "winner_id",
@@ -533,7 +513,7 @@ def load_sackmann_matches(
         ]
     ).copy()
 
-    matches = matches.sort_values(
+    matches = matches.sort_values( #ordina cronologicamente
         [
             "tourney_date",
             "tourney_id",
@@ -542,23 +522,23 @@ def load_sackmann_matches(
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # ID interno stabile.
+    # ID interno stabile, new col
     matches["match_id"] = np.arange(
-        len(matches),
-        dtype=np.int64,
+        len(matches), #tot number matches
+        dtype=np.int64, #interi 64 bit
     )
 
     print(
-        f"Anni Sackmann caricati: "
+        f"Anni Sackmann caricati: " #primo e ultimo
         f"{loaded_years[0]}-{loaded_years[-1]}"
     )
 
     print(
-        f"Match Sackmann caricati: "
+        f"Match Sackmann caricati: " #tot number matches
         f"{len(matches):,}"
     )
 
-    if missing_years:
+    if missing_years: #quanti anni senza file
         print(
             f"Anni mancanti/non presenti: "
             f"{len(missing_years)}"
@@ -566,60 +546,56 @@ def load_sackmann_matches(
 
     return matches
 
-
-# ============================================================================
-# NAME MATCHING
-# ============================================================================
-
+# NAME MATCHING(players in sackman and players in original dataset)==================================
 def build_name_map(
         tennis_data_names: pd.Series,
         sackmann_players: pd.DataFrame,
-        fuzzy_threshold: int,
-        fuzzy_margin: int,
-) -> tuple[dict[str, str], pd.DataFrame]:
+        fuzzy_threshold: int, #Score minimo richiesto x accettare match
+        fuzzy_margin: int, #Differenza min richiesta tra 1° score e 2°
+) -> tuple[dict[str, str], pd.DataFrame]: #return: dizionario con chiavi e str + DataFrame
 
     players = sackmann_players.copy()
 
     players[
         ["surname_norm", "initial"]
-    ] = players["full_name"].map(
+    ] = players["full_name"].map( #applica funz (cognome + iniziale)
         sackmann_name_parts
     ).apply(
-        pd.Series
+        pd.Series #2 col: full_name + map(cognome + iniziale)
     )
 
-    by_surname: dict[str, list[dict]] = {}
+    by_surname: dict[str, list[dict]] = {} #create empty dictionary
 
-    for _, row in players.iterrows():
+    for _, row in players.iterrows(): # _ indice della riga
 
         surname = row["surname_norm"]
 
         if not surname:
             continue
 
-        by_surname.setdefault(
+        by_surname.setdefault( #empty list if surname not exist
             surname,
             [],
-        ).append(
+        ).append( #add player data
             row.to_dict()
         )
 
-    surname_list = list(by_surname.keys())
+    surname_list = list(by_surname.keys()) #list surname disponibili
 
-    name_map: dict[str, str] = {}
-    review_rows: list[dict] = []
+    name_map: dict[str, str] = {} #create for accepted match
+    review_rows: list[dict] = [] #create for ogni tentativo di matching, anche falliti
 
-    unique_names = sorted(
+    unique_names = sorted( #delete duplicate and sort names alfabetically
         {
-            str(x)
-            for x in tennis_data_names.dropna()
-            if str(x).strip()
+            str(x) #name to str
+            for x in tennis_data_names.dropna() #drop NaN
+            if str(x).strip() #no empty value or spaces
         }
     )
 
-    for td_name in unique_names:
+    for td_name in unique_names: #for on each distinct player(no duplicate)
 
-        surname, initial = tennis_data_name_parts(td_name)
+        surname, initial = tennis_data_name_parts(td_name) #Estrazione cognome+iniziale
 
         row_base = {
             "tennis_data_name": td_name,
@@ -628,9 +604,9 @@ def build_name_map(
         }
 
         if not surname:
-            review_rows.append(
+            review_rows.append( #registra il problema
                 {
-                    **row_base,
+                    **row_base, #inserisce nuovo dizionario le coppie chiave-valore di row_base
                     "sackmann_name": None,
                     "player_id": None,
                     "match_method": "invalid_name",
@@ -640,31 +616,28 @@ def build_name_map(
             )
             continue
 
-        # ------------------------------------------------------------
-        # 1. Exact surname + initial
-        # ------------------------------------------------------------
-
-        candidates = by_surname.get(
+        # 1. Exact surname + initial---------------------------------------------------
+        candidates = by_surname.get( #return player with surname X
             surname,
-            [],
+            [], #or empty list if there are not players with that surname X
         )
 
-        exact = [
+        exact = [ #search initials for that surname X
             c
             for c in candidates
-            if not initial
+            if not initial #se nn ce ne sono, conserva tutti candidati con cognome X
                or c["initial"] == initial
         ]
 
-        if len(exact) == 1:
+        if len(exact) == 1: #1 player with that surname -> accepted
 
-            chosen = exact[0]
+            chosen = exact[0] #select 1° player
 
             name_map[td_name] = chosen["player_id"]
 
             review_rows.append(
                 {
-                    **row_base,
+                    **row_base, #aggiorna dizionario
                     "sackmann_name": chosen["full_name"],
                     "player_id": chosen["player_id"],
                     "match_method": "exact_surname_initial",
@@ -675,10 +648,7 @@ def build_name_map(
 
             continue
 
-        # ------------------------------------------------------------
-        # 2. Exact surname, ma iniziale ambigua
-        # ------------------------------------------------------------
-
+        #2. Exact surname, ma iniziale ambigua(james, john)----------------------------
         if len(exact) > 1:
 
             review_rows.append(
@@ -694,16 +664,12 @@ def build_name_map(
 
             continue
 
-        # ------------------------------------------------------------
-        # 3. Exact surname senza iniziale
-        # ------------------------------------------------------------
-
-        if len(candidates) == 1:
+        #3. Exact surname senza iniziale---------------------------------------------------
+        if len(candidates) == 1: #se esiste solo 1 player con quel cognome
 
             chosen = candidates[0]
 
-            # Se Tennis-Data non ha iniziale, un singolo cognome
-            # è sufficientemente sicuro.
+            #Se non ha iniziale in original dataset ma in sackman nome+cognome -> match sicuro anche per il nome
             if not initial:
 
                 name_map[td_name] = chosen["player_id"]
@@ -721,26 +687,23 @@ def build_name_map(
 
                 continue
 
-        # ------------------------------------------------------------
-        # 4. Fuzzy surname
-        # ------------------------------------------------------------
-
-        if HAS_RAPIDFUZZ:
+        # 4. Fuzzy surname-------------------------------------------------------
+        if HAS_RAPIDFUZZ: #se libreria RapidFuzz disponibile
 
             fuzzy_results = rf_process.extract(
                 surname,
                 surname_list,
-                scorer=rf_fuzz.ratio,
-                limit=3,
+                scorer=rf_fuzz.ratio, #similarità tra stringhe
+                limit=3, #return max 3 surname
             )
 
             if fuzzy_results:
 
-                best_surname, best_score, _ = fuzzy_results[0]
+                best_surname, best_score, _ = fuzzy_results[0] #best candidato
 
-                second_score = (
+                second_score = ( #prende score 2°
                     fuzzy_results[1][1]
-                    if len(fuzzy_results) > 1
+                    if len(fuzzy_results) > 1 #if score exist
                     else None
                 )
 
@@ -751,16 +714,16 @@ def build_name_map(
                         [],
                     )
                     if not initial
-                       or c["initial"] == initial
+                       or c["initial"] == initial #keep player with that surname
                 ]
 
-                margin_ok = (
+                margin_ok = ( #check 1° player SUFFICENTEMENTE MEGLIO 2° (fuzzy_margin)
                         second_score is None
                         or best_score - second_score >= fuzzy_margin
                 )
 
                 if (
-                        best_score >= fuzzy_threshold
+                        best_score >= fuzzy_threshold #score >= soglia configurata
                         and margin_ok
                         and len(candidates) == 1
                 ):
@@ -782,7 +745,7 @@ def build_name_map(
 
                     continue
 
-                review_rows.append(
+                review_rows.append( #if fuzzy match fallisce
                     {
                         **row_base,
                         "sackmann_name": None,
@@ -795,10 +758,7 @@ def build_name_map(
 
                 continue
 
-        # ------------------------------------------------------------
-        # 5. Unmatched
-        # ------------------------------------------------------------
-
+        # 5. Unmatched, non esiste surname------------------------------------------------
         review_rows.append(
             {
                 **row_base,
@@ -810,17 +770,14 @@ def build_name_map(
             }
         )
 
-    review_df = pd.DataFrame(
+    review_df = pd.DataFrame( #create report final
         review_rows
     )
 
-    return name_map, review_df
+    return name_map, review_df #registro player senza name matching
 
 
-# ============================================================================
-# PRE-MATCH SERVICE FEATURES
-# ============================================================================
-
+# PRE-MATCH SERVICE FEATURES(per evitare data leakage, statistiche giocatore prima ciascun match)==============
 def build_pre_match_serve_features(
         matches: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -836,9 +793,9 @@ def build_pre_match_serve_features(
     propagate da un match all'altro della stessa giornata.
     """
 
-    matches = matches.copy()
+    matches = matches.copy() #copy of dataframe
 
-    matches = matches.sort_values(
+    matches = matches.sort_values( #Ordina per data e ID
         [
             "tourney_date",
             "match_id",
@@ -846,9 +803,7 @@ def build_pre_match_serve_features(
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # ------------------------------------------------------------
-    # Normalizzazione numerica
-    # ------------------------------------------------------------
+    # Normalizzazione numerica------------------------------------------------
 
     numeric_columns = [
         "w_ace",
@@ -874,17 +829,14 @@ def build_pre_match_serve_features(
     for col in numeric_columns:
 
         if col not in matches.columns:
-            matches[col] = np.nan
+            matches[col] = np.nan #Se manca col, crea riempiendola NaN
 
-        matches[col] = pd.to_numeric(
+        matches[col] = pd.to_numeric( #valori in numeri, dopo farà operazioni senza problemi dovuti a valori testuali
             matches[col],
-            errors="coerce",
+            errors="coerce", #val non convertibili -> NaN
         )
 
-    # ------------------------------------------------------------
-    # Long format
-    # ------------------------------------------------------------
-
+    # Long format, cerca di unire winner e loser in unico dataset nuovo----------------------------------------------------
     winner = pd.DataFrame(
         {
             "match_id": matches["match_id"],
@@ -919,7 +871,7 @@ def build_pre_match_serve_features(
         }
     )
 
-    long_df = pd.concat(
+    long_df = pd.concat( #unisce tabelle -> 2 righe per ogni match (xkè ha 2 player)
         [
             winner,
             loser,
@@ -936,10 +888,7 @@ def build_pre_match_serve_features(
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # ------------------------------------------------------------
-    # Cumulative history
-    # ------------------------------------------------------------
-
+    #statistiche di cui bisogna calcolare lo storico-----------------------------------
     history_columns = [
         "ace",
         "df",
@@ -952,29 +901,25 @@ def build_pre_match_serve_features(
         "bp_faced",
     ]
 
-    grouped = long_df.groupby(
+    grouped = long_df.groupby( #Raggruppa le righe per giocatore
         "player_id",
         sort=False,
     )
 
     for col in history_columns:
 
-        # shift BEFORE the current match:
-        # cumulative value from previous observations only.
-        long_df[f"{col}_cum_before"] = (
-            grouped[col]
-            .cumsum()
-            .groupby(long_df["player_id"])
-            .shift(1)
+        #somma statistiche accumulate nei match precedenti al corrente
+        long_df[f"{col}_cum_before"] = ( #new col
+            grouped[col] #separa i dati per giocatore
+            .cumsum() #somma progressiva statistiche, include match corrente
+            .groupby(long_df["player_id"]) #Raggruppa nuovamente la serie dei cumulativi per giocatore
+            .shift(1) #sposta 1 posizione cumulativo, escludendo match corrente
         )
 
-    # ------------------------------------------------------------
-    # Denominators
-    # ------------------------------------------------------------
-
+    # Denominators, cumulativo punti al servizio precedenti------------------------------------------------------
     svpt_before = (
         long_df["svpt_cum_before"]
-        .replace(0, np.nan)
+        .replace(0, np.nan) #zero -> NaN evita divisioni per zero
     )
 
     first_in_before = (
@@ -982,7 +927,7 @@ def build_pre_match_serve_features(
         .replace(0, np.nan)
     )
 
-    second_balls_before = (
+    second_balls_before = ( #2° palle giocate sottraendo 1° entrate dal totale dei punti al servizio
             svpt_before
             - long_df["first_in_cum_before"]
     ).replace(
@@ -1000,11 +945,8 @@ def build_pre_match_serve_features(
         .replace(0, np.nan)
     )
 
-    # ------------------------------------------------------------
-    # Rates
-    # ------------------------------------------------------------
-
-    long_df["ace_rate_before"] = (
+    # Rates-----------------------------------------------------
+    long_df["ace_rate_before"] = ( #ace per punto al servizio
             long_df["ace_cum_before"]
             / svpt_before
     )
@@ -1039,7 +981,7 @@ def build_pre_match_serve_features(
             / sv_games_before
     )
 
-    feature_cols = [
+    feature_cols = [ #feature finali da conservare
         "ace_rate_before",
         "df_rate_before",
         "first_in_rate_before",
@@ -1054,18 +996,14 @@ def build_pre_match_serve_features(
             "match_id",
             "tourney_date",
             "player_id",
-            *feature_cols,
+            *feature_cols, # * inserire lista tutte colonne in quella variabile
         ]
     ].copy()
 
     return result
 
-
-# ============================================================================
-# PRE-MATCH LOOKUP
-# ============================================================================
-
-def attach_latest_pre_match_features(
+# PRE-MATCH LOOKUP===================================================================
+def attach_latest_pre_match_features( #per collegare a ogni match ultime stat storiche del giocatore, calcolate prima della data della partita
         cleaned: pd.DataFrame,
         player_ids: pd.Series,
         pre_match_features: pd.DataFrame,
@@ -1079,7 +1017,7 @@ def attach_latest_pre_match_features(
     Usa merge_asof invece di una scansione completa per ogni match.
     """
 
-    feature_cols = [
+    feature_cols = [ #7 statistiche da recuperare
         "ace_rate_before",
         "df_rate_before",
         "first_in_rate_before",
@@ -1091,31 +1029,31 @@ def attach_latest_pre_match_features(
 
     base = cleaned[
         [
-            "_cleaned_row_id",
+            "_cleaned_row_id", #id match
             "date",
         ]
     ].copy()
 
-    base["player_id"] = player_ids.values
+    base["player_id"] = player_ids.values #add sackman id
 
     base = base.dropna(
-        subset=["player_id", "date"]
+        subset=["player_id", "date"] #drop row without id
     ).copy()
 
-    base["player_id"] = (
+    base["player_id"] = ( #id -> str
         base["player_id"]
         .astype(str)
     )
 
-    history = pre_match_features[
+    history = pre_match_features[ #Seleziona dal dataset storico
         [
             "player_id",
             "tourney_date",
-            *feature_cols,
+            *feature_cols, #7 feature qui sopra
         ]
     ].copy()
 
-    history = history.dropna(
+    history = history.dropna( #drop row without id o date
         subset=[
             "player_id",
             "tourney_date",
@@ -1127,8 +1065,8 @@ def attach_latest_pre_match_features(
         .astype(str)
     )
 
-    # merge_asof richiede ordinamento globale per la chiave temporale.
-    base = base.sort_values(
+    # merge_asof richiede ordinamento per chiavi temporali
+    base = base.sort_values( #ordina dataset
         [
             "date",
             "player_id",
@@ -1136,7 +1074,7 @@ def attach_latest_pre_match_features(
         kind="mergesort",
     )
 
-    history = history.sort_values(
+    history = history.sort_values( #ordina storico
         [
             "tourney_date",
             "player_id",
@@ -1144,11 +1082,10 @@ def attach_latest_pre_match_features(
         kind="mergesort",
     )
 
-    # "backward" + allow_exact_matches=False:
-    # usa solo date < match date.
+    #"backward" + allow_exact_matches=False: solo date < match date.
     merged = pd.merge_asof(
-        base,
-        history,
+        base, #cerca, per ogni riga di base
+        history, #ultima osservazione storica disponibile stesso player
         left_on="date",
         right_on="tourney_date",
         by="player_id",
@@ -1156,51 +1093,44 @@ def attach_latest_pre_match_features(
         allow_exact_matches=False,
     )
 
-    merged = merged.sort_values(
+    merged = merged.sort_values( #Ripristino ordine dataset originale
         "_cleaned_row_id"
     )
 
-    renamed = {
-        col: f"{prefix}_{col}"
+    renamed = { #rename feature
+        col: f"{prefix}_{col}" #ace_rate_before -> winner_ace_rate_before
         for col in feature_cols
     }
 
-    merged = merged.rename(
+    merged = merged.rename( #applica new names
         columns=renamed
     )
 
     return merged[
         [
-            "_cleaned_row_id",
-            *renamed.values(),
+            "_cleaned_row_id", #original id
+            *renamed.values(), #7 feature
         ]
     ]
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
-
+# MAIN====================================================================
 def main() -> None:
 
-    args = parse_args()
+    args = parse_args() #recupera parametri passati da terminale(fuzzy matching, sackman file, percorso dataset pulito)
 
     print("=" * 78)
     print("ENRICH WITH SACKMANN")
     print("=" * 78)
 
-    # ------------------------------------------------------------
-    # Input
-    # ------------------------------------------------------------
-
+    # Input----------------------------------------------------
     if not args.cleaned_input.exists():
         raise FileNotFoundError(
             f"Input non trovato: {args.cleaned_input}"
         )
 
     cleaned = pd.read_csv(
-        args.cleaned_input,
-        low_memory=False,
+        args.cleaned_input, #load csv in pandas dataframe
+        low_memory=False, #legge file senza dividerlo in blocchi per dedurre i tipi delle colonne, riduce rischio Pandas assegni tipi diversi stessa colonna in lettura
     )
 
     required_cleaned = {
@@ -1221,31 +1151,28 @@ def main() -> None:
             f"{sorted(missing_cleaned)}"
         )
 
-    cleaned["date"] = pd.to_datetime(
+    cleaned["date"] = pd.to_datetime( #col date -> format datetime
         cleaned["date"],
-        errors="coerce",
+        errors="coerce", #not valid date -> NaN
     )
 
-    cleaned = cleaned.reset_index(
+    cleaned = cleaned.reset_index( #reset_index
         drop=True
     )
 
-    cleaned["_cleaned_row_id"] = np.arange(
-        len(cleaned),
+    cleaned["_cleaned_row_id"] = np.arange( #create id for each row
+        len(cleaned), #number of rows in dataframe named cleaned
         dtype=np.int64,
     )
 
-    # ------------------------------------------------------------
-    # Years
-    # ------------------------------------------------------------
-
-    min_year = int(
+    # Years--------------------------------------------------------
+    min_year = int( #find min year
         cleaned["source_year"]
         .dropna()
         .min()
     )
 
-    max_year = int(
+    max_year = int( #find max year
         cleaned["source_year"]
         .dropna()
         .max()
@@ -1253,8 +1180,8 @@ def main() -> None:
 
     start_year = (
         args.start_year
-        if args.start_year is not None
-        else max(1968, min_year - 5)
+        if args.start_year is not None #Se start_year specificato terminale
+        else max(1968, min_year - 5) #altrimenti cinque anni prima min_year del dataset, no sotto 1968
     )
 
     end_year = (
@@ -1268,10 +1195,7 @@ def main() -> None:
         f"Range Sackmann: {start_year}-{end_year}"
     )
 
-    # ------------------------------------------------------------
-    # Load Sackmann
-    # ------------------------------------------------------------
-
+    # Load Sackmann------------------------------------------------------
     players = load_sackmann_players(
         args.sackmann_dir
     )
@@ -1282,14 +1206,11 @@ def main() -> None:
         end_year,
     )
 
-    # ------------------------------------------------------------
-    # Name matching
-    # ------------------------------------------------------------
-
+    #Name matching--------------------------------------------------
     print()
     print("Costruisco la mappa dei nomi...")
 
-    all_names = pd.concat(
+    all_names = pd.concat( #Unisce vincitori e perdenti unica Serie
         [
             cleaned["winner_name"],
             cleaned["loser_name"],
@@ -1297,31 +1218,31 @@ def main() -> None:
         ignore_index=True,
     )
 
-    name_map, review_df = build_name_map(
+    name_map, review_df = build_name_map( #map = dizionario associa nomi 2 dataset. review_df = report matching(ambigui/falliti)
         all_names,
         players,
         fuzzy_threshold=args.fuzzy_threshold,
         fuzzy_margin=args.fuzzy_margin,
     )
 
-    args.unmatched_report.parent.mkdir(
+    args.unmatched_report.parent.mkdir( #
         parents=True,
         exist_ok=True,
     )
 
-    review_df.to_csv(
+    review_df.to_csv( #save in csv
         args.unmatched_report,
         index=False,
     )
 
-    unresolved_methods = {
+    unresolved_methods = { #count unresolved name
         "unmatched",
         "ambiguous_surname_initial",
         "fuzzy_ambiguous_or_low_score",
         "invalid_name",
     }
 
-    unresolved = review_df[
+    unresolved = review_df[ #select rows in report with those problems in matching
         review_df["match_method"].isin(
             unresolved_methods
         )
@@ -1347,11 +1268,8 @@ def main() -> None:
         f"{args.unmatched_report}"
     )
 
-    # ------------------------------------------------------------
-    # IDs
-    # ------------------------------------------------------------
-
-    cleaned["winner_sackmann_id"] = (
+    # IDs------------------------------------------------------
+    cleaned["winner_sackmann_id"] = ( #search id_sackman_player for each player in dictionary
         cleaned["winner_name"]
         .map(name_map)
     )
@@ -1361,35 +1279,32 @@ def main() -> None:
         .map(name_map)
     )
 
-    # ------------------------------------------------------------
-    # Bio
-    # ------------------------------------------------------------
-
-    bio = players.set_index(
+    # Bio------------------------------------------------------
+    bio = players.set_index( #player_id = indice DataFrame
         "player_id"
     )
 
-    def get_bio(
+    def get_bio( #tramite input id -> trova info player
             player_id: object,
             field: str,
     ):
-        if pd.isna(player_id):
+        if pd.isna(player_id): #se id manca -> NaN
             return np.nan
 
-        player_id = str(player_id)
+        player_id = str(player_id) #id -> str
 
-        if player_id not in bio.index:
+        if player_id not in bio.index:  #se id manca anagrafica -> NaN
             return np.nan
 
         return bio.loc[
             player_id,
-            field,
+            field, #campo da recuperare(height, hand,...)
         ]
-
+    #Recupera altezza due giocatori
     cleaned["winner_height"] = (
         cleaned["winner_sackmann_id"]
         .map(
-            lambda x: get_bio(x, "height")
+            lambda x: get_bio(x, "height") #func(int x) -> height
         )
     )
 
@@ -1399,7 +1314,7 @@ def main() -> None:
             lambda x: get_bio(x, "height")
         )
     )
-
+    #Recupera mano dominante
     cleaned["winner_hand"] = (
         cleaned["winner_sackmann_id"]
         .map(
@@ -1413,7 +1328,7 @@ def main() -> None:
             lambda x: get_bio(x, "hand")
         )
     )
-
+    #Calcolo dell'età
     winner_dob = (
         cleaned["winner_sackmann_id"]
         .map(
@@ -1427,16 +1342,16 @@ def main() -> None:
             lambda x: get_bio(x, "birth_date")
         )
     )
-
+    #Recupera date nascita
     cleaned["winner_age_years"] = (
             (
                     cleaned["date"]
-                    - pd.to_datetime(
+                    - pd.to_datetime( #data nascita - data match
                 winner_dob,
                 errors="coerce",
             )
-            ).dt.days
-            / 365.25
+            ).dt.days #days number
+            / 365.25 #days -> year
     )
 
     cleaned["loser_age_years"] = (
@@ -1450,10 +1365,7 @@ def main() -> None:
             / 365.25
     )
 
-    # ------------------------------------------------------------
-    # Historical features
-    # ------------------------------------------------------------
-
+    # Historical features-----------------------------------------------------
     print()
     print(
         "Calcolo feature storiche "
@@ -1471,10 +1383,7 @@ def main() -> None:
         f"{len(pre_match_serve):,}"
     )
 
-    # ------------------------------------------------------------
-    # Attach historical features
-    # ------------------------------------------------------------
-
+    # Attach historical features------------------------------------------------------
     print(
         "Aggancio feature pre-match "
         "con merge_asof..."
@@ -1493,20 +1402,20 @@ def main() -> None:
 
     loser_features = (
         attach_latest_pre_match_features(
-            cleaned=cleaned,
-            player_ids=cleaned[
+            cleaned=cleaned, #dataset originale da arricchire
+            player_ids=cleaned[ #search loser
                 "loser_sackmann_id"
             ],
-            pre_match_features=pre_match_serve,
-            prefix="loser",
+            pre_match_features=pre_match_serve, #passa lo storico già calcolato
+            prefix="loser", #prefissi col: loser_id
         )
     )
 
     cleaned = cleaned.merge(
         winner_features,
-        on="_cleaned_row_id",
-        how="left",
-        validate="one_to_one",
+        on="_cleaned_row_id", #colonna utilizzata per collegare le righe
+        how="left", #mantiene tutte le righe di cleaned
+        validate="one_to_one", #ogni riga max 1 corrispondenza
     )
 
     cleaned = cleaned.merge(
@@ -1516,10 +1425,7 @@ def main() -> None:
         validate="one_to_one",
     )
 
-    # ------------------------------------------------------------
-    # Derived comparison features
-    # ------------------------------------------------------------
-
+    #Derived feature di confronto-----------------------------------------------------
     cleaned["height_diff"] = (
             cleaned["winner_height"]
             - cleaned["loser_height"]
@@ -1535,56 +1441,47 @@ def main() -> None:
             - cleaned["loser_ace_rate_before"]
     )
 
-    cleaned["first_won_rate_diff"] = (
+    cleaned["first_won_rate_diff"] = ( #vittorie prima palla
             cleaned["winner_first_won_rate_before"]
             - cleaned["loser_first_won_rate_before"]
     )
 
-    cleaned["bp_saved_rate_diff"] = (
+    cleaned["bp_saved_rate_diff"] = ( #percentuale palle break salvate
             cleaned["winner_bp_saved_rate_before"]
             - cleaned["loser_bp_saved_rate_before"]
     )
 
-    # ------------------------------------------------------------
-    # Restore original order
-    # ------------------------------------------------------------
-
+    #riordina dataset secondo l'ordine iniziale----------------------------------------------------
     cleaned = cleaned.sort_values(
         "_cleaned_row_id"
     ).reset_index(
         drop=True
     )
 
-    cleaned = cleaned.drop(
+    cleaned = cleaned.drop( #Elimina la colonna tecnica
         columns=[
             "_cleaned_row_id",
         ]
     )
 
-    # ------------------------------------------------------------
-    # Output
-    # ------------------------------------------------------------
-
+    # Output------------------------------------------------------
     args.output.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+        parents=True, #crea eventuali cartelle intermedie
+        exist_ok=True, #evita errori se la cartella esiste già
     )
 
-    cleaned.to_csv(
-        args.output,
-        index=False,
+    cleaned.to_csv( #DataFrame -> file CSV
+        args.output, #dove salvarlo
+        index=False, #non salva indice come colonna in più
     )
 
-    # ------------------------------------------------------------
-    # Coverage report
-    # ------------------------------------------------------------
-
+    # Coverage report------------------------------------------------------
     print()
     print("=" * 78)
     print("COVERAGE")
     print("=" * 78)
 
-    coverage_columns = [
+    coverage_columns = [ #col to check
         "winner_sackmann_id",
         "loser_sackmann_id",
         "winner_height",
@@ -1607,12 +1504,12 @@ def main() -> None:
         "loser_bp_faced_per_sv_game_before",
     ]
 
-    for col in coverage_columns:
+    for col in coverage_columns: #check col above
 
         if col not in cleaned.columns:
             continue
 
-        pct = (
+        pct = ( # % valori non mancanti
                 cleaned[col]
                 .notna()
                 .mean()
@@ -1623,16 +1520,14 @@ def main() -> None:
             f"{col:<42} {pct:6.2f}%"
         )
 
-    # ------------------------------------------------------------
-    # Leakage sanity checks
-    # ------------------------------------------------------------
+    # Leakage sanity checks-----------------------------------------------------
 
     print()
     print("=" * 78)
     print("SANITY CHECKS")
     print("=" * 78)
 
-    bad_age = (
+    bad_age = ( #check age<12 or >60
             (cleaned["winner_age_years"] < 12)
             | (cleaned["winner_age_years"] > 60)
     ).sum()
@@ -1668,7 +1563,7 @@ def main() -> None:
         if col not in cleaned.columns:
             continue
 
-        invalid = (
+        invalid = ( # 0 < feature percentuali < 1
                 cleaned[col].notna()
                 & (
                         (cleaned[col] < 0)
@@ -1676,7 +1571,7 @@ def main() -> None:
                 )
         )
 
-        out_of_range += int(
+        out_of_range += int( #Somma numero valori non validi trovati colonne
             invalid.sum()
         )
 
@@ -1703,11 +1598,6 @@ def main() -> None:
     print(
         "Il file può essere passato a build_features.py."
     )
-
-
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     main()
