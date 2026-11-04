@@ -573,8 +573,11 @@ def build_name_map(
         fuzzy_margin: int,
 ) -> tuple[dict[str, str], pd.DataFrame]:
 
+    # Copy the player table so temporary matching columns do not alter the input.
     players = sackmann_players.copy()
 
+    # Parse each full name into (normalized surname, first-name initial).
+    # map() produces tuples; apply(pd.Series) expands them into two columns.
     players[
         ["surname_norm", "initial"]
     ] = players["full_name"].map(
@@ -583,15 +586,21 @@ def build_name_map(
         pd.Series
     )
 
+    # Group player records by normalized surname for exact lookups.
     by_surname: dict[str, list[dict]] = {}
 
+    # Visit each player row; the unused DataFrame index is assigned to _.
     for _, row in players.iterrows():
 
+        # Read the normalized surname used as the lookup key.
         surname = row["surname_norm"]
 
+        # Skip Sackmann players with no usable surname.
         if not surname:
+            # Advance to the next Sackmann player.
             continue
 
+        # Create an empty list for a new surname, then append this player as a dict.
         by_surname.setdefault(
             surname,
             [],
@@ -599,11 +608,16 @@ def build_name_map(
             row.to_dict()
         )
 
+    # Compare fuzzy queries against distinct surnames, not individual players.
     surname_list = list(by_surname.keys())
 
+    # Map accepted original Tennis-Data names to Sackmann player IDs.
     name_map: dict[str, str] = {}
+    # Collect accepted and rejected decisions for the review table.
     review_rows: list[dict] = []
 
+    # Drop missing names, stringify, reject whitespace-only values, deduplicate,
+    # and sort. strip() checks emptiness but does not change stored spellings.
     unique_names = sorted(
         {
             str(x)
@@ -612,17 +626,22 @@ def build_name_map(
         }
     )
 
+    # Resolve each distinct Tennis-Data name once.
     for td_name in unique_names:
 
+        # Parse an abbreviated name: "Nadal R." becomes ("nadal", "r").
         surname, initial = tennis_data_name_parts(td_name)
 
+        # Shared report fields; **row_base copies these into decision dictionaries.
         row_base = {
             "tennis_data_name": td_name,
             "tennis_data_surname": surname,
             "tennis_data_initial": initial,
         }
 
+        # Report an unparseable Tennis-Data name without assigning a player ID.
         if not surname:
+            # Append the decision and its scores to the review report.
             review_rows.append(
                 {
                     **row_base,
@@ -633,17 +652,20 @@ def build_name_map(
                     "second_score": None,
                 }
             )
+            # This name is handled; advance to the next Tennis-Data name.
             continue
 
         # ------------------------------------------------------------
         # 1. Exact surname + initial
         # ------------------------------------------------------------
 
+        # Fetch players with this exact normalized surname, or an empty list.
         candidates = by_surname.get(
             surname,
             [],
         )
 
+        # Require the initial to match when supplied; otherwise keep all candidates.
         exact = [
             c
             for c in candidates
@@ -651,12 +673,16 @@ def build_name_map(
                or c["initial"] == initial
         ]
 
+        # Accept only a unique candidate, including surname-only input.
         if len(exact) == 1:
 
+            # Extract the sole player record.
             chosen = exact[0]
 
+            # Save the association under the original Tennis-Data spelling.
             name_map[td_name] = chosen["player_id"]
 
+            # Append the decision and its scores to the review report.
             review_rows.append(
                 {
                     **row_base,
@@ -668,14 +694,17 @@ def build_name_map(
                 }
             )
 
+            # This name is handled; advance to the next Tennis-Data name.
             continue
 
         # ------------------------------------------------------------
         # 2. Exact surname, ma iniziale ambigua
         # ------------------------------------------------------------
 
+        # Refuse multiple exact candidates rather than guessing an identity.
         if len(exact) > 1:
 
+            # Append the decision and its scores to the review report.
             review_rows.append(
                 {
                     **row_base,
@@ -687,22 +716,28 @@ def build_name_map(
                 }
             )
 
+            # This name is handled; advance to the next Tennis-Data name.
             continue
 
         # ------------------------------------------------------------
         # 3. Exact surname senza iniziale
         # ------------------------------------------------------------
 
+        # This fallback is currently redundant: a unique surname without an
+        # initial is already accepted by the len(exact) == 1 branch above.
         if len(candidates) == 1:
 
+            # Select the only player with this exact surname.
             chosen = candidates[0]
 
             # Se Tennis-Data non ha iniziale, un singolo cognome
             # è sufficientemente sicuro.
             if not initial:
 
+                # Store the accepted association using the original input spelling.
                 name_map[td_name] = chosen["player_id"]
 
+                # Record the surname-only decision with a fixed exact-match score.
                 review_rows.append(
                     {
                         **row_base,
@@ -714,12 +749,15 @@ def build_name_map(
                     }
                 )
 
+                # Matching succeeded; process the next input name.
                 continue
 
         # ------------------------------------------------------------
         # 4. Fuzzy surname
         # ------------------------------------------------------------
 
+        # Rank up to three surnames by character similarity (0 to 100).
+        # Results contain (surname, score, index in surname_list).
         fuzzy_results = rf_process.extract(
             surname,
             surname_list,
@@ -727,16 +765,21 @@ def build_name_map(
             limit=3,
         )
 
+        # A nonempty result list provides at least one surname to consider.
         if fuzzy_results:
 
+            # Extract the top surname and score; discard its list index.
             best_surname, best_score, _ = fuzzy_results[0]
 
+            # Keep the runner-up score to detect close surname matches.
             second_score = (
                 fuzzy_results[1][1]
                 if len(fuzzy_results) > 1
                 else None
             )
 
+            # Consider only players under the best surname, filtering by initial.
+            # Lower-ranked surnames are not tried if this yields no player.
             candidates = [
                 c
                 for c in by_surname.get(
@@ -747,21 +790,26 @@ def build_name_map(
                     or c["initial"] == initial
             ]
 
+            # Require a sufficient lead over the runner-up, if one exists.
             margin_ok = (
                     second_score is None
                     or best_score - second_score >= fuzzy_margin
             )
 
+            # Accept only a strong surname score, a sufficient lead, and one player.
             if (
                     best_score >= fuzzy_threshold
                     and margin_ok
                     and len(candidates) == 1
             ):
 
+                # Extract the unique player that passed all fuzzy checks.
                 chosen = candidates[0]
 
+                # Store the accepted association using the original input spelling.
                 name_map[td_name] = chosen["player_id"]
 
+                # Record the accepted match and the two surname similarity scores.
                 review_rows.append(
                     {
                         **row_base,
@@ -773,8 +821,10 @@ def build_name_map(
                     }
                 )
 
+                # Matching succeeded; process the next input name.
                 continue
 
+            # Append the decision and its scores to the review report.
             review_rows.append(
                 {
                     **row_base,
@@ -786,12 +836,14 @@ def build_name_map(
                 }
             )
 
+            # This name is handled; advance to the next Tennis-Data name.
             continue
 
         # ------------------------------------------------------------
         # 5. Unmatched
         # ------------------------------------------------------------
 
+        # No surname suggestions were available; report the name as unmatched.
         review_rows.append(
             {
                 **row_base,
@@ -803,10 +855,12 @@ def build_name_map(
             }
         )
 
+    # Convert the decision dictionaries into a table, one row per processed name.
     review_df = pd.DataFrame(
         review_rows
     )
 
+    # Return accepted mappings separately from the full decision report.
     return name_map, review_df
 
 
