@@ -4,11 +4,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
+import platform
+from datetime import datetime, timezone
+from importlib.metadata import version
+
+import numpy as np
 from pathlib import Path
 
 import pandas as pd
 from catboost import CatBoostClassifier
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, roc_auc_score, log_loss, brier_score_loss
+
+from training_utils import (
+    chronological_holdout_split,
+    feature_schema,
+    load_feature_dataset,
+)
 
 
 # Shared preprocessing below is also imported by prediction and notebook code.
@@ -60,10 +72,7 @@ def prepare_catboost_features(
     # CatBoost categorical inputs must be strings with no null values.
     for column in categorical_features:
         features[column] = (
-            features[column]
-            .astype("string")
-            .fillna(MISSING_CATEGORY)
-            .astype(str)
+            features[column].astype("string").fillna(MISSING_CATEGORY).astype(str)
         )
 
     return features
@@ -76,47 +85,122 @@ def chronological_split(
 ) -> tuple[pd.Series, pd.Series]:
     """Use old matches for training and the newest dates for testing."""
 
-    # The fraction applies to unique dates, so the row fraction may differ.
-    dates = sorted(data["date"].unique())
-    split_index = int(len(dates) * (1 - test_fraction))
-    split_date = dates[split_index]
-
-    train_mask = data["date"] < split_date
-    test_mask = data["date"] >= split_date
-
+    train_indices, test_indices = chronological_holdout_split(
+        data["date"], test_fraction
+    )
+    train_mask = pd.Series(False, index=data.index)
+    test_mask = pd.Series(False, index=data.index)
+    train_mask.iloc[train_indices] = True
+    test_mask.iloc[test_indices] = True
     return train_mask, test_mask
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def classification_metrics(target, probability) -> dict[str, float]:
+    """Evaluate a binary probability vector, including uncovered market subsets."""
+    target = np.asarray(target)
+    probability = np.asarray(probability, dtype=float)
+    if not len(target):
+        return dict.fromkeys(
+            ("accuracy", "roc_auc", "log_loss", "brier_score"), float("nan")
+        )
+    return {
+        "accuracy": float(accuracy_score(target, probability >= 0.5)),
+        "roc_auc": float(roc_auc_score(target, probability))
+        if len(np.unique(target)) == 2
+        else float("nan"),
+        "log_loss": float(log_loss(target, probability, labels=[0, 1])),
+        "brier_score": float(brier_score_loss(target, probability)),
+    }
+
+
+def evaluate_market(target, model_probability, market_probability) -> dict:
+    """Compare both predictors on exactly the rows with valid market probabilities."""
+    market = np.asarray(market_probability, dtype=float)
+    valid = np.isfinite(market) & (market > 0) & (market < 1)
+    return {
+        "rows": int(valid.sum()),
+        "coverage": float(valid.mean()) if len(valid) else 0.0,
+        "catboost": classification_metrics(
+            np.asarray(target)[valid], np.asarray(model_probability)[valid]
+        ),
+        "market": classification_metrics(np.asarray(target)[valid], market[valid]),
+    }
+
+
+def load_verified_model(
+    model_path: Path,
+    metrics: dict,
+    *,
+    input_path: Path | None = None,
+    metadata_path: Path | None = None,
+) -> CatBoostClassifier:
+    """Reject mixed artifacts; evaluation additionally verifies its original inputs."""
+    numeric, categorical = feature_schema(metrics)
+    hashes = metrics.get("sha256", {})
+    for name, path in (
+        ("model", model_path),
+        ("input", input_path),
+        ("metadata", metadata_path),
+    ):
+        if path is not None and hashes.get(name) != sha256_file(path):
+            raise ValueError(
+                f"Artifact hash mismatch: {name}. Regenerate matching training artifacts."
+            )
+    if metadata_path is not None:
+        saved_schema = feature_schema(
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+        )
+        if saved_schema != (numeric, categorical):
+            raise ValueError("Training metadata and model feature schema differ.")
+    model = CatBoostClassifier()
+    model.load_model(str(model_path))
+    if model.feature_names_ != list(numeric + categorical):
+        raise ValueError("Model feature order does not match the metrics schema.")
+    if model.get_cat_feature_indices() != list(
+        range(len(numeric), len(numeric + categorical))
+    ):
+        raise ValueError("Model categorical features do not match the metrics schema.")
+    classes = model.classes_
+    if classes is None or list(classes) != [0, 1]:
+        raise ValueError("Model must predict classes [0, 1] in that order.")
+    return model
 
 
 # Training workflow: load -> prepare -> split -> fit -> evaluate -> save.
 def main() -> None:
     args = parse_args()
 
-    # 1. Load the engineered dataset and its feature schema.
-    data = pd.read_csv(args.input)
-    metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
-
-    numeric_features = metadata["numeric_features"]
-    categorical_features = metadata["categorical_features"]
-    # Metadata defines both the selected columns and their order for the model.
-    feature_names = numeric_features + categorical_features
-
-    data["date"] = pd.to_datetime(data["date"], errors="raise")
-
+    dataset = load_feature_dataset(args.input, args.metadata)
+    numeric_features = list(dataset.numeric_features)
+    categorical_features = list(dataset.categorical_features)
+    forbidden = {
+        "date",
+        "player_a_win",
+        "match_id_internal",
+        "winner_name",
+        "loser_name",
+        "winner_sackmann_id",
+        "loser_sackmann_id",
+    }
+    if forbidden.intersection(dataset.features.columns):
+        raise ValueError("Identifiers, dates and outcomes must not be model features.")
     X = prepare_catboost_features(
-        data[feature_names],
-        numeric_features,
-        categorical_features,
+        dataset.features, numeric_features, categorical_features
     )
-    # Class 1 means the oriented player A wins; class 0 means player B wins.
-    y = data["player_a_win"].astype(int)
-
-    # 2. Train on older dates and evaluate on newer dates to avoid a random time split.
-    train_mask, test_mask = chronological_split(data)
-
-    X_train = X.loc[train_mask]
-    X_test = X.loc[test_mask]
-    y_train = y.loc[train_mask]
-    y_test = y.loc[test_mask]
+    y = dataset.target
+    train_indices, test_indices = chronological_holdout_split(dataset.dates, 0.15)
+    X_train, X_test = X.iloc[train_indices], X.iloc[test_indices]
+    y_train, y_test = y.iloc[train_indices], y.iloc[test_indices]
+    if y_train.nunique() != 2 or y_test.nunique() != 2:
+        raise ValueError("Training and holdout must both contain classes 0 and 1.")
 
     # 3. Create the model.
     model = CatBoostClassifier(
@@ -134,35 +218,61 @@ def main() -> None:
     # 4. Train.
     model.fit(X_train, y_train)
 
-    # 5. Predict and evaluate.
-    predictions = model.predict(X_test).astype(int).ravel()
-    # Probability column 1 corresponds to the player-A-win target.
-    probabilities = model.predict_proba(X_test)[:, 1]
-
-    accuracy = accuracy_score(y_test, predictions)
-    roc_auc = roc_auc_score(y_test, probabilities)
-
+    train_metrics = classification_metrics(y_train, model.predict_proba(X_train)[:, 1])
+    holdout_metrics = classification_metrics(y_test, model.predict_proba(X_test)[:, 1])
     print(f"Training rows: {len(X_train):,}")
     print(f"Test rows: {len(X_test):,}")
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"ROC AUC: {roc_auc:.4f}")
+    print(f"Accuracy: {holdout_metrics['accuracy']:.4f}")
+    print(f"ROC AUC: {holdout_metrics['roc_auc']:.4f}")
 
-    # 6. Save the model and minimal metadata needed by predict_catboost.py.
     args.output_model.parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(str(args.output_model))
+    temporary_model = args.output_model.with_suffix(".cbm.tmp")
+    model.save_model(str(temporary_model))
+    temporary_model.replace(args.output_model)
 
-    # Prediction reads this schema alongside the saved model to rebuild its inputs.
+    train_dates = dataset.dates.iloc[train_indices]
+    holdout_dates = dataset.dates.iloc[test_indices]
     metrics = {
         "algorithm": "CatBoostClassifier",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "versions": {
+            "python": platform.python_version(),
+            **{
+                package: version(package)
+                for package in ("catboost", "pandas", "scikit-learn", "numpy")
+            },
+        },
+        "sha256": {
+            "input": sha256_file(args.input),
+            "metadata": sha256_file(args.metadata),
+            "model": sha256_file(args.output_model),
+            "trainer": sha256_file(Path(__file__)),
+        },
+        "params": model.get_params(),
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
-        "holdout_accuracy": float(accuracy),
-        "holdout_roc_auc": float(roc_auc),
+        "train_rows": len(X_train),
+        "holdout_rows": len(X_test),
+        "train_date_range": [
+            train_dates.min().date().isoformat(),
+            train_dates.max().date().isoformat(),
+        ],
+        "holdout_date_range": [
+            holdout_dates.min().date().isoformat(),
+            holdout_dates.max().date().isoformat(),
+        ],
+        "split_date": holdout_dates.min().date().isoformat(),
+        "holdout_fraction": 0.15,
+        "train_metrics": train_metrics,
+        "holdout_metrics": holdout_metrics,
+        "holdout_accuracy": holdout_metrics["accuracy"],
+        "holdout_roc_auc": holdout_metrics["roc_auc"],
+        "evaluation_note": "Reused historical holdout; not a new independent test.",
     }
 
     args.output_metrics.parent.mkdir(parents=True, exist_ok=True)
     args.output_metrics.write_text(
-        json.dumps(metrics, indent=2),
+        json.dumps(metrics, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 

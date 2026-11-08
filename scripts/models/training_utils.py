@@ -26,6 +26,22 @@ class FeatureDataset:
     categorical_features: tuple[str, ...]
 
 
+def feature_schema(metadata: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate the ordered numeric/categorical feature contract."""
+    for key in ("numeric_features", "categorical_features"):
+        values = metadata.get(key)
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError(f"Invalid feature schema: {key} must be a list of names.")
+    numeric = tuple(metadata["numeric_features"])
+    categorical = tuple(metadata["categorical_features"])
+    names = numeric + categorical
+    if not names or len(set(names)) != len(names):
+        raise ValueError("Invalid feature schema: empty or duplicate feature names.")
+    return numeric, categorical
+
+
 def parse_excluded_features(value: str) -> set[str]:
     """Parse a comma-separated feature list passed on the command line."""
 
@@ -50,25 +66,24 @@ def load_feature_dataset(
         )
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    for key in ("numeric_features", "categorical_features"):
-        if key not in metadata or not isinstance(metadata[key], list):
-            raise ValueError(f"Metadata non validi: '{key}' deve essere una lista.")
+    declared_numeric, declared_categorical = feature_schema(metadata)
 
-    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
-    frame = frame.dropna(subset=["date"]).reset_index(drop=True)
-    if frame.empty:
-        raise ValueError("Il dataset non contiene righe con una data valida.")
+    frame["date"] = pd.to_datetime(frame["date"], format="ISO8601", errors="coerce")
+    if frame.empty or frame["date"].isna().any():
+        raise ValueError("Dataset vuoto o date non valide.")
 
     numeric_features = tuple(
-        feature
-        for feature in metadata["numeric_features"]
-        if feature in frame.columns and feature not in excluded_features
+        feature for feature in declared_numeric if feature not in excluded_features
     )
     categorical_features = tuple(
-        feature
-        for feature in metadata["categorical_features"]
-        if feature in frame.columns and feature not in excluded_features
+        feature for feature in declared_categorical if feature not in excluded_features
     )
+
+    missing_features = set(numeric_features + categorical_features).difference(
+        frame.columns
+    )
+    if missing_features:
+        raise ValueError(f"Missing declared features: {sorted(missing_features)}")
 
     duplicated_features = set(numeric_features).intersection(categorical_features)
     if duplicated_features:
@@ -79,7 +94,7 @@ def load_feature_dataset(
     if not numeric_features and not categorical_features:
         raise ValueError("Nessuna feature disponibile per l'addestramento.")
 
-    target = pd.to_numeric(frame["player_a_win"], errors="raise").astype(int)
+    target = pd.to_numeric(frame["player_a_win"], errors="raise")
     target_values = set(target.unique().tolist())
     if not target_values.issubset({0, 1}) or len(target_values) < 2:
         raise ValueError(
@@ -89,7 +104,7 @@ def load_feature_dataset(
     feature_names = list(numeric_features + categorical_features)
     return FeatureDataset(
         features=frame.loc[:, feature_names].copy(),
-        target=target,
+        target=target.astype(int),
         dates=frame["date"].copy(),
         numeric_features=numeric_features,
         categorical_features=categorical_features,

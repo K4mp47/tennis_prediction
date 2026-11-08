@@ -77,10 +77,7 @@ def parse_args() -> argparse.Namespace: #configure input, output e parametric wi
         "--rare-threshold",
         type=int,
         default=20,
-        help=(
-            "Minimum number of observations required to keep a "
-            "tournament/location category."
-        ),
+        help="Deprecated compatibility option; raw tournament/location categories are used.",
     )
     #number of feature to delite at every RFECV
     parser.add_argument(
@@ -387,6 +384,16 @@ def build_player_history_features(
         "days_since_last_match",
     ]
 
+    # Freeze each day's state; surface history also belongs to the surface being played.
+    surface_history_cols = [column for column in history_cols if column.startswith("surface_")]
+    player_history_cols = [column for column in history_cols if column not in surface_history_cols]
+    long_df[player_history_cols] = long_df.groupby(
+        ["player_name", "date"], sort=False
+    )[player_history_cols].transform("first", skipna=False)
+    long_df[surface_history_cols] = long_df.groupby(
+        ["player_name", "surface", "date"], sort=False
+    )[surface_history_cols].transform("first", skipna=False)
+
     winner_hist = ( #Selects each match's historical features for the winning player
         long_df[
             [
@@ -527,6 +534,10 @@ def build_head_to_head_features(
             .cumsum()
             - current_player1_win
     )
+    daily_columns = ["h2h_matches_before", "pair_player1_wins_before"]
+    out[daily_columns] = out.groupby(
+        ["pair_key", "date"], sort=False
+    )[daily_columns].transform("first", skipna=False)
     #count wins current winner before this match, cumulative result minus current result.
     out["winner_h2h_wins_before"] = np.where(
         out["winner_is_player1"] == 1,
@@ -628,6 +639,18 @@ def add_model_features(  #more feature
                 - out["loser_implied_prob_avg"]
         )
 
+        valid_market = out["avg_winner"].gt(1) & out["avg_loser"].gt(1)
+        total = out["winner_implied_prob_avg"] + out["loser_implied_prob_avg"]
+        out["winner_market_prob_normalized"] = (
+            out["winner_implied_prob_avg"] / total
+        ).where(valid_market)
+        out["loser_market_prob_normalized"] = (
+            out["loser_implied_prob_avg"] / total
+        ).where(valid_market)
+        out["normalized_market_prob_diff"] = (
+            out["winner_market_prob_normalized"] - out["loser_market_prob_normalized"]
+        )
+
     # PLAYER HISTORY DIFFERENCES--------------------------------------------------
     #new and old feature for winner/loser pair
     history_pairs = [
@@ -725,18 +748,7 @@ def add_model_features(  #more feature
                     - out[loser_col]
             )
 
-    # CATEGORICAL BUCKETS------------------------------------------------------
-    if "tournament" in out.columns: #"other" category
-        out["tournament_bucket"] = map_rare_categories(
-            out["tournament"],
-            rare_threshold,
-        )
-
-    if "location" in out.columns:
-        out["location_bucket"] = map_rare_categories(
-            out["location"],
-            rare_threshold,
-        )
+    # Raw categories avoid learning category frequencies from the future test set.
 
     out = out.sort_values(
         [
@@ -775,6 +787,9 @@ def make_symmetric_dataset(
 
     #Swap player variables
     swap_pairs = [
+        *[(f"{source}_winner", f"{source}_loser")
+          for source in ("b365", "ps", "max", "avg", "bfe")],
+        ("winner_market_prob_normalized", "loser_market_prob_normalized"),
         ("winner_rank", "loser_rank"),
         ("winner_points", "loser_points"),
         ("winner_rank_missing", "loser_rank_missing"),
@@ -891,6 +906,7 @@ def make_symmetric_dataset(
     # Flip difference features----------------------------------------------------------
     #features calculated as winner - loser, must change sign to preserve meaning
     sign_flip_columns = [
+        "normalized_market_prob_diff",
         "rank_diff",
         "points_diff",
         "implied_prob_diff_avg",
@@ -952,8 +968,8 @@ def build_feature_matrix(
         "series",
         "court",
         "surface",
-        "tournament_bucket",
-        "location_bucket",
+        "tournament",
+        "location",
     ]
 
     numeric_features = [
@@ -1024,34 +1040,6 @@ def build_feature_matrix(
         "loser_age_years",
         "age_diff",
 
-        # Sackmann serve/return
-        "winner_ace_rate_before",
-        "loser_ace_rate_before",
-        "ace_rate_diff",
-
-        "winner_df_rate_before",
-        "loser_df_rate_before",
-        "df_rate_diff",
-
-        "winner_first_in_rate_before",
-        "loser_first_in_rate_before",
-        "first_in_rate_diff",
-
-        "winner_first_won_rate_before",
-        "loser_first_won_rate_before",
-        "first_won_rate_diff",
-
-        "winner_second_won_rate_before",
-        "loser_second_won_rate_before",
-        "second_won_rate_diff",
-
-        "winner_bp_saved_rate_before",
-        "loser_bp_saved_rate_before",
-        "bp_saved_rate_diff",
-
-        "winner_bp_faced_per_sv_game_before",
-        "loser_bp_faced_per_sv_game_before",
-        "bp_faced_per_sv_game_diff",
     ]
 
     available_categorical = [  #Keeps categorical features that exist in input DataFrame
@@ -1544,15 +1532,6 @@ def main() -> None:
         )
 
     # ---------------------------------------------------------------
-    # Remove internal column from saved dataset
-    # ---------------------------------------------------------------
-
-    if "match_id_internal" in df.columns:
-        df = df.drop(
-            columns=["match_id_internal"]
-        )
-
-    # ---------------------------------------------------------------
     # Save features
     # ---------------------------------------------------------------
 
@@ -1601,9 +1580,9 @@ def main() -> None:
             categorical_features
         ),
 
-        "rare_threshold": int(
-            args.rare_threshold
-        ),
+        "category_policy": "raw categories; no full-dataset frequency fitting",
+        "history_policy": "strictly previous dates; same-day ordering by match_id_internal",
+        "sackmann_policy": "biography only; unverified service timestamps excluded",
 
         "rfecv_step": int(
             args.rfecv_step
@@ -1675,3 +1654,7 @@ def main() -> None:
             "CV folds: "
             f"{metrics['baseline_cv_accuracy_folds']}"
         )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,9 +1,7 @@
-from __future__ import annotations
-
 """
 enrich_with_sackmann.py
 
-Arricchisce il dataset Tennis-Data già pulito con dati provenienti dalla
+Arricchisce il dataset Tennis-Data già pulito con anagrafica proveniente dalla
 repository Jeff Sackmann / tennis_atp.
 
 Input:
@@ -11,7 +9,6 @@ Input:
 
 Dati esterni:
     external/tennis_atp/atp_players.csv
-    external/tennis_atp/atp_matches_YYYY.csv
 
 Output:
     data/interim/tennis_matches_enriched.data
@@ -27,40 +24,12 @@ Anagrafica:
     winner_age_years
     loser_age_years
 
-Storico servizio:
-    winner_ace_rate_before
-    loser_ace_rate_before
-    winner_df_rate_before
-    loser_df_rate_before
-    winner_first_in_rate_before
-    loser_first_in_rate_before
-    winner_first_won_rate_before
-    loser_first_won_rate_before
-    winner_second_won_rate_before
-    loser_second_won_rate_before
-    winner_bp_saved_rate_before
-    loser_bp_saved_rate_before
-    winner_bp_faced_per_sv_game_before
-    loser_bp_faced_per_sv_game_before
+Le statistiche di servizio basate sulla sola data di inizio torneo sono escluse
+nel main: non dimostrano la disponibilità prima della partita. Gli helper storici
+restano disponibili per analisi separate, ma non alimentano il modello corrente.
 
-Differenze:
-    height_diff
-    age_diff
-    ace_rate_diff
-    first_won_rate_diff
-    bp_saved_rate_diff
-
-ANTI-LEAKAGE
-------------
-
-Le statistiche storiche sono costruite usando esclusivamente match
-precedenti al match corrente.
-
-Per esempio, per un match del 2015-06-10, le statistiche del giocatore
-sono calcolate usando solo match con data < 2015-06-10.
-
-I match giocati nella stessa data non vengono usati per costruire le
-feature del match corrente.
+Differenze: height_diff e age_diff.
+La biografia deriva da uno snapshot, non da un archivio storico completo.
 
 NAME MATCHING
 -------------
@@ -88,11 +57,13 @@ Il report:
 contiene tutte le decisioni di matching.
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -126,8 +97,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         required=True,
         help=(
-            "Cartella contenente atp_players.csv e "
-            "atp_matches_YYYY.csv."
+            "Cartella contenente atp_players.csv per l’arricchimento anagrafico."
         ),
     )
 
@@ -136,8 +106,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Primo anno Sackmann da caricare. "
-            "Default: min(source_year)-5."
+            "Deprecated compatibility option; biography enrichment does not load matches."
         ),
     )
 
@@ -146,8 +115,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Ultimo anno Sackmann da caricare. "
-            "Default: max(source_year)."
+            "Deprecated compatibility option; biography enrichment does not load matches."
         ),
     )
 
@@ -307,7 +275,7 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
             "Controlla --sackmann-dir."
         )
 
-    print(f"Carico giocateruns the failing cori Sackmann: {path}")
+    print(f"Carico giocatori Sackmann: {path}")
 
     df = pd.read_csv(
         path,
@@ -1282,38 +1250,9 @@ def main() -> None:
         dtype=np.int64,
     )
 
-    # ------------------------------------------------------------
-    # Years
-    # ------------------------------------------------------------
-
-    min_year = int(
-        cleaned["source_year"]
-        .dropna()
-        .min()
-    )
-
-    max_year = int(
-        cleaned["source_year"]
-        .dropna()
-        .max()
-    )
-
-    start_year = (
-        args.start_year
-        if args.start_year is not None
-        else max(1968, min_year - 5)
-    )
-
-    end_year = (
-        args.end_year
-        if args.end_year is not None
-        else max_year
-    )
-
-    print()
-    print(
-        f"Range Sackmann: {start_year}-{end_year}"
-    )
+    if cleaned["date"].isna().any():
+        raise ValueError("Il dataset pulito contiene date mancanti o non valide.")
+    print("Sackmann: solo anagrafica; statistiche di servizio con date non verificate escluse.")
 
     # ------------------------------------------------------------
     # Load Sackmann
@@ -1321,12 +1260,6 @@ def main() -> None:
 
     players = load_sackmann_players(
         args.sackmann_dir
-    )
-
-    sk_matches = load_sackmann_matches(
-        args.sackmann_dir,
-        start_year,
-        end_year,
     )
 
     # ------------------------------------------------------------
@@ -1497,100 +1430,9 @@ def main() -> None:
             / 365.25
     )
 
-    # ------------------------------------------------------------
-    # Historical features
-    # ------------------------------------------------------------
-
-    print()
-    print(
-        "Calcolo feature storiche "
-        "di servizio/risposta..."
-    )
-
-    pre_match_serve = (
-        build_pre_match_serve_features(
-            sk_matches
-        )
-    )
-
-    print(
-        f"Righe storico giocatore: "
-        f"{len(pre_match_serve):,}"
-    )
-
-    # ------------------------------------------------------------
-    # Attach historical features
-    # ------------------------------------------------------------
-
-    print(
-        "Aggancio feature pre-match "
-        "con merge_asof..."
-    )
-
-    winner_features = (
-        attach_latest_pre_match_features(
-            cleaned=cleaned,
-            player_ids=cleaned[
-                "winner_sackmann_id"
-            ],
-            pre_match_features=pre_match_serve,
-            prefix="winner",
-        )
-    )
-
-    loser_features = (
-        attach_latest_pre_match_features(
-            cleaned=cleaned,
-            player_ids=cleaned[
-                "loser_sackmann_id"
-            ],
-            pre_match_features=pre_match_serve,
-            prefix="loser",
-        )
-    )
-
-    cleaned = cleaned.merge(
-        winner_features,
-        on="_cleaned_row_id",
-        how="left",
-        validate="one_to_one",
-    )
-
-    cleaned = cleaned.merge(
-        loser_features,
-        on="_cleaned_row_id",
-        how="left",
-        validate="one_to_one",
-    )
-
-    # ------------------------------------------------------------
-    # Derived comparison features
-    # ------------------------------------------------------------
-
-    cleaned["height_diff"] = (
-            cleaned["winner_height"]
-            - cleaned["loser_height"]
-    )
-
-    cleaned["age_diff"] = (
-            cleaned["winner_age_years"]
-            - cleaned["loser_age_years"]
-    )
-
-    cleaned["ace_rate_diff"] = (
-            cleaned["winner_ace_rate_before"]
-            - cleaned["loser_ace_rate_before"]
-    )
-
-    cleaned["first_won_rate_diff"] = (
-            cleaned["winner_first_won_rate_before"]
-            - cleaned["loser_first_won_rate_before"]
-    )
-
-    cleaned["bp_saved_rate_diff"] = (
-            cleaned["winner_bp_saved_rate_before"]
-            - cleaned["loser_bp_saved_rate_before"]
-    )
+    # Tournament start dates cannot establish when service statistics became available.
+    cleaned["height_diff"] = cleaned["winner_height"] - cleaned["loser_height"]
+    cleaned["age_diff"] = cleaned["winner_age_years"] - cleaned["loser_age_years"]
 
     # ------------------------------------------------------------
     # Restore original order

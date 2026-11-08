@@ -11,7 +11,7 @@ import pandas as pd
 from catboost import CatBoostClassifier
 
 # Reuse training preprocessing so inference uses identical missing-value handling.
-from train_catboost import prepare_catboost_features
+from train_catboost import prepare_catboost_features, load_verified_model
 
 
 # Command-line interface: select input rows, trained artifacts, and decision threshold.
@@ -110,8 +110,7 @@ def main() -> None:
     categorical_features = tuple(metrics["categorical_features"])
 
     # Load fitted weights; prediction does not train or rebuild engineered features.
-    model = CatBoostClassifier()
-    model.load_model(str(args.model))
+    model = load_verified_model(args.model, metrics)
     input_frame = pd.read_csv(args.input)
     scored = score_rows(
         input_frame,
