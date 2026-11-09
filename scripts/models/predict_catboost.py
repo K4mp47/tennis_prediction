@@ -52,7 +52,7 @@ def score_rows(
     model: CatBoostClassifier,
     numeric_features: tuple[str, ...],
     categorical_features: tuple[str, ...],
-    threshold: float = 0.5,
+    threshold: float = 0.5, #soglia decisionale
 ) -> pd.DataFrame:
     """Return the input rows with player-A probabilities and winner labels."""
 
@@ -60,7 +60,7 @@ def score_rows(
         raise ValueError("The prediction threshold must be between 0 and 1.")
 
     feature_names = numeric_features + categorical_features
-    missing_features = sorted(set(feature_names).difference(frame.columns))
+    missing_features = sorted(set(feature_names).difference(frame.columns)) #feature richieste ma mancanti nel dataset
     if missing_features:
         raise ValueError(
             "Input is missing model features: " + ", ".join(missing_features)
@@ -69,21 +69,21 @@ def score_rows(
     prepared = prepare_catboost_features(
         frame.loc[:, feature_names], numeric_features, categorical_features
     )
-    player_a_probability = model.predict_proba(prepared)[:, 1]
-    player_a_prediction = (player_a_probability >= threshold).astype(int)
+    player_a_probability = model.predict_proba(prepared)[:, 1] #prob giocatore A vinca
+    player_a_prediction = (player_a_probability >= threshold).astype(int) #se >0,5 A vince
 
     scored = frame.copy()
-    scored["player_a_win_probability"] = player_a_probability
-    scored["player_b_win_probability"] = 1 - player_a_probability
-    scored["predicted_player_a_win"] = player_a_prediction
-    scored["predicted_winner_side"] = np.where(
+    scored["player_a_win_probability"] = player_a_probability #prob A win
+    scored["player_b_win_probability"] = 1 - player_a_probability  #prob B win
+    scored["predicted_player_a_win"] = player_a_prediction #previsione binaria
+    scored["predicted_winner_side"] = np.where( #previsione numerica -> etichetta leggibile
         player_a_prediction == 1, "player_a", "player_b"
     )
 
     # Symmetric feature datasets retain the historical winner/loser column
     # names, although they represent oriented player A/player B after swapping.
-    if {"winner_name", "loser_name"}.issubset(scored.columns):
-        scored["predicted_winner_name"] = np.where(
+    if {"winner_name", "loser_name"}.issubset(scored.columns): #se dataset contiene entrambe col
+        scored["predicted_winner_name"] = np.where( #Se modello predice A, A_name = winner_name
             player_a_prediction == 1,
             scored["winner_name"],
             scored["loser_name"],
@@ -94,14 +94,14 @@ def score_rows(
 
 def main() -> None:
     args = parse_args()
-    metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
+    metrics = json.loads(args.metrics.read_text(encoding="utf-8")) #legge JSON
     numeric_features = tuple(metrics["numeric_features"])
     categorical_features = tuple(metrics["categorical_features"])
 
-    model = CatBoostClassifier()
-    model.load_model(str(args.model))
-    input_frame = pd.read_csv(args.input)
-    scored = score_rows(
+    model = CatBoostClassifier() #Crea oggetto CatBoost e carica modello precedentemente salvato
+    model.load_model(str(args.model)) #no nuovo addestramento
+    input_frame = pd.read_csv(args.input) #carica dataset analizzare
+    scored = score_rows( #funzione calcola probabilità e previsioni
         input_frame,
         model,
         numeric_features,
@@ -111,7 +111,7 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     scored.to_csv(args.output, index=False)
-    print(f"Scored rows: {len(scored):,}")
+    print(f"Scored rows: {len(scored):,}") #numero righe analizzate
     print(f"Predictions: {args.output}")
 
 

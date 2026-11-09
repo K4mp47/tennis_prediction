@@ -387,7 +387,7 @@ def load_sackmann_players(sackmann_dir: Path) -> pd.DataFrame:
         keep="first",
     )
 
-    print(f"Giocatori caricati: {len(df):,}") #number of players
+    print(f"Giocatori caric–ati: {len(df):,}") #number of players
 
     return df
 
